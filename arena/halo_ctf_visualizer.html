@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>CITADEL ARENA — Halo 3-Flag CTF (Red Swarm vs. Blue Citadel)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #06080e;
+      --panel: #0d121d;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --blue: #38bdf8;
+      --blue-glow: rgba(56, 189, 248, 0.35);
+      --red: #f43f5e;
+      --red-glow: rgba(244, 63, 94, 0.35);
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 18px 24px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .title-wrap h1 {
+      font-size: 18px;
+      letter-spacing: 0.5px;
+      color: #fff;
+      text-transform: uppercase;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-blue { background: rgba(56,189,248,0.15); color: var(--blue); border: 1px solid rgba(56,189,248,0.4); }
+    .badge-red { background: rgba(244,63,94,0.15); color: var(--red); border: 1px solid rgba(244,63,94,0.4); }
+    .badge-gold { background: rgba(245,158,11,0.18); color: var(--amber); border: 1px solid rgba(245,158,11,0.45); }
+
+    .scoreboard {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .score-blue { color: var(--blue); text-shadow: 0 0 10px var(--blue-glow); }
+    .score-red { color: var(--red); text-shadow: 0 0 10px var(--red-glow); }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #162032;
+      color: #fff;
+      border: 1px solid #2dd4bf55;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: #1e293b; border-color: var(--blue); }
+    button.btn-primary { background: rgba(56,189,248,0.2); border-color: var(--blue); color: var(--blue); }
+    button.btn-danger { background: rgba(244,63,94,0.18); border-color: var(--red); color: var(--red); }
+    button.btn-amber { background: rgba(245,158,11,0.18); border-color: var(--amber); color: var(--amber); }
+
+    .arena-layout {
+      display: grid;
+      grid-template-columns: 1fr 390px;
+      gap: 16px;
+    }
+    @media (max-width: 1100px) {
+      .arena-layout { grid-template-columns: 1fr; }
+    }
+
+    .canvas-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    canvas {
+      width: 100%;
+      height: 540px;
+      display: block;
+      background: radial-gradient(circle at 75% 50%, #0c192c 0%, #06080e 70%);
+    }
+
+    .medal-banner {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(9, 13, 22, 0.92);
+      border: 1px solid var(--amber);
+      box-shadow: 0 0 24px rgba(245, 158, 11, 0.35);
+      padding: 8px 20px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--amber);
+      letter-spacing: 1px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    .medal-banner.visible { opacity: 1; }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card-header {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding-bottom: 8px;
+    }
+    .killfeed {
+      height: 270px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11.5px;
+    }
+    .kf-item {
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: rgba(0,0,0,0.35);
+      border-left: 3px solid var(--blue);
+      line-height: 1.4;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .kf-item.red-score { border-left-color: var(--red); background: rgba(244,63,94,0.1); }
+    .kf-item.medal { border-left-color: var(--amber); background: rgba(245,158,11,0.12); color: #fde68a; font-weight: 700; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+
+    .flag-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 10px;
+      background: rgba(0,0,0,0.28);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .metrics-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.35);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .m-box .v { font-size: 16px; font-weight: 800; color: #fff; }
+    .m-box .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title-wrap">
+      <h1>🛡️ CITADEL ARENA: BLOOD GULCH 3-FLAG CTF</h1>
+      <span class="badge badge-blue">BLUE: CITADEL 7-RING</span>
+      <span class="badge badge-red">RED: AUTONOMOUS SWARM</span>
+      <span class="badge badge-gold" id="mode-badge">MODE: CITADEL + MANDALA KEKKAI ACTIVE</span>
+    </div>
+    <div class="scoreboard">
+      <span class="score-blue">BLUE <span id="blue-score">3</span></span>
+      <span style="color:var(--muted)">—</span>
+      <span class="score-red"><span id="red-score">0</span> RED</span>
+      <span style="font-size:12px;color:var(--amber)">(<span id="counter-kills">0</span>/9 Counter-Captures)</span>
+    </div>
+    <div class="controls">
+      <button class="btn-primary" onclick="startMatch(true)">▶ Play Match (Citadel Protected)</button>
+      <button class="btn-danger" onclick="startMatch(false)">⚠️ Simulate Unprotected Agent Runner</button>
+      <button class="btn-amber" onclick="spawnSwarmBlitz()">⚡ 25x Red Swarm Blitz</button>
+    </div>
+  </div>
+
+  <div class="arena-layout">
+    <div class="canvas-card">
+      <div class="medal-banner" id="medal-banner">🏆 UNTOUCHABLE — RUNNING RIOT!</div>
+      <canvas id="arena" width="960" height="540"></canvas>
+      <div class="metrics-bar">
+        <div class="m-box">
+          <div class="v" id="stat-xdp" style="color:var(--blue)">3,233 ns</div>
+          <div class="l">Ring 1 eBPF/XDP Drop</div>
+        </div>
+        <div class="m-box">
+          <div class="v" id="stat-tokens" style="color:var(--purple)">0 tokens</div>
+          <div class="l">Ring 2 Genjutsu Token Drain</div>
+        </div>
+        <div class="m-box">
+          <div class="v" id="stat-asym" style="color:var(--emerald)">11,024,242x</div>
+          <div class="l">Economic Asymmetry</div>
+        </div>
+        <div class="m-box">
+          <div class="v" id="stat-medal" style="color:var(--amber)">READY</div>
+          <div class="l">Halo Match Medal</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="card">
+        <div class="card-header">
+          <span>🚩 3-Flag Citadel Status</span>
+          <span id="timer-lbl">00:00.0</span>
+        </div>
+        <div class="flag-row">
+          <span>🚩 <b>Flag 1:</b> VAULT_ENCLAVE_CROWN</span>
+          <span id="flag1-state" style="color:var(--emerald);font-weight:700">HOME (Landlock + Airlock)</span>
+        </div>
+        <div class="flag-row">
+          <span>🚩 <b>Flag 2:</b> CRYSTAL_LINEAGE_CORE</span>
+          <span id="flag2-state" style="color:var(--emerald);font-weight:700">HOME (SLH-DSA + Grover)</span>
+        </div>
+        <div class="flag-row">
+          <span>🚩 <b>Flag 3:</b> GENJUTSU_NEXUS_BEACON</span>
+          <span id="flag3-state" style="color:var(--emerald);font-weight:700">HOME (XDP + Herd Mesh)</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>⚔️ Live Agent Killfeed</span>
+          <span style="color:var(--blue)" id="kf-count">0 events</span>
+        </div>
+        <div class="killfeed" id="killfeed"></div>
+      </div>
+
+      <div class="card" style="font-size:11.5px;color:#94a3b8;line-height:1.45;">
+        <div class="card-header"><span>🔬 OpenCode v2.1.1 Alignment</span></div>
+        <div>
+          Toggle <b>"Simulate Unprotected Agent Runner"</b> above to compare a standard same-UID agent tool runner (where <code>auth.json</code>, <code>opencode.db</code>, and <code>process.env</code> are exposed to prompt-injected tools) against <b>Citadel + Mandala Kekkai</b>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById("arena");
+const ctx = canvas.getContext("2d");
+
+let citadelProtected = true;
+let redUnits = [];
+let blueDefenders = [];
+let projectiles = [];
+let shockwaves = [];
+let counterKills = 0;
+let redCaptures = 0;
+let tokensDrained = 0;
+let kfEvents = 0;
+let matchStart = performance.now();
+
+const FLAGS = [
+  { id: 1, name: "FLAG{VAULT_ENCLAVE}", x: 835, y: 135, color: "#38bdf8", status: "HOME", ring: "Ring 5: Landlock + Env Airlock" },
+  { id: 2, name: "FLAG{CRYSTAL_LINEAGE}", x: 855, y: 270, color: "#a855f7", status: "HOME", ring: "Ring 0: PQC SLH-DSA + Grover" },
+  { id: 3, name: "FLAG{GENJUTSU_NEXUS}", x: 835, y: 405, color: "#10b981", status: "HOME", ring: "Ring 1-4: XDP + Genjutsu + Mesh" },
+];
+
+const BLUE_TEAM_ROSTER = [
+  { name: "Blue-1 · eBPF-XDP-Driver", x: 560, y: 405, ringRadius: 290, color: "#38bdf8" },
+  { name: "Blue-2 · Genjutsu-Twin", x: 625, y: 270, ringRadius: 230, color: "#a855f7" },
+  { name: "Blue-3 · Replay-Immunizer", x: 685, y: 160, ringRadius: 175, color: "#10b981" },
+  { name: "Blue-4 · Canary-Sniper", x: 740, y: 135, ringRadius: 125, color: "#f59e0b" },
+  { name: "Blue-5 · Mandala-Kekkai", x: 785, y: 270, ringRadius: 80, color: "#38bdf8" },
+  { name: "Blue-6 · PQC-SLH-Guardian", x: 805, y: 390, ringRadius: 45, color: "#ec4899" },
+];
+
+const RED_WAVES = [
+  { delay: 400,  name: "Red-1 · Path-Traverser", targetFlag: 0, vector: "open('/etc/shadow') & auth.json", interceptor: 4, weapon: "Landlock LSM EACCES (Metsu Freeze)", latency: "8.1 ms", tokens: 0 },
+  { delay: 1100, name: "Red-2 · Scope-Escaper", targetFlag: 0, vector: "write('/home/lucas/breach')", interceptor: 4, weapon: "Landlock Write-Boundary Kill", latency: "9.0 ms", tokens: 0 },
+  { delay: 1800, name: "Red-3 · Env-Key-Drainer", targetFlag: 0, vector: "process.env.OPENAI_API_KEY", interceptor: 3, weapon: "Stateless HMAC Canary Snipe", latency: "0.4 ms", tokens: 4200 },
+  { delay: 2500, name: "Red-4 · BitFlip-Tamper", targetFlag: 1, vector: "T1 Storage Byte-Flip on Crystal", interceptor: 5, weapon: "SLH-DSA 99-Chain W-OTS+ Reject", latency: "1.8 ms", tokens: 0 },
+  { delay: 3200, name: "Red-5 · Quantum-Forger", targetFlag: 1, vector: "Forged Post-Quantum Signature", interceptor: 5, weapon: "Winternitz Checksum Verification", latency: "1.7 ms", tokens: 0 },
+  { delay: 3900, name: "Red-6 · History-Rewriter", targetFlag: 1, vector: "T9 Audit Chain Rollback", interceptor: 5, weapon: "Grover SHA-384+BLAKE2b Dual-Ledger", latency: "0.9 ms", tokens: 0 },
+  { delay: 4600, name: "Red-7 · Port-Scanner-Bot", targetFlag: 2, vector: "Unauth SYN Scan on :22/:7369", interceptor: 0, weapon: "In-Driver eBPF XDP_DROP", latency: "3,233 ns", tokens: 0 },
+  { delay: 5300, name: "Red-8 · IMDS-K8s-Spider", targetFlag: 2, vector: "GET /latest/meta-data/iam + /.env", interceptor: 1, weapon: "Genjutsu Infinite Schema Drain + 0%-FP Rule", latency: "2.5 ms", tokens: 35333 },
+  { delay: 6000, name: "Red-9 · Lateral-Swarm-Node", targetFlag: 2, vector: "Reuse Creds on Peer Node B", interceptor: 2, weapon: "7.9ms P2P Herd-Immunity Pre-Block", latency: "0.76 µs", tokens: 0 },
+];
+
+function addKillfeed(html, cls = "") {
+  const kf = document.getElementById("killfeed");
+  const div = document.createElement("div");
+  div.className = "kf-item " + cls;
+  div.innerHTML = html;
+  kf.prepend(div);
+  kfEvents++;
+  document.getElementById("kf-count").textContent = kfEvents + " events";
+}
+
+function showMedal(text) {
+  const banner = document.getElementById("medal-banner");
+  banner.textContent = text;
+  banner.classList.add("visible");
+  document.getElementById("stat-medal").textContent = text.replace(/^🏆\s*/, "");
+  setTimeout(() => banner.classList.remove("visible"), 3200);
+}
+
+function startMatch(protectedMode = true) {
+  citadelProtected = protectedMode;
+  redUnits = [];
+  projectiles = [];
+  shockwaves = [];
+  counterKills = 0;
+  redCaptures = 0;
+  tokensDrained = 0;
+  matchStart = performance.now();
+
+  document.getElementById("mode-badge").textContent = protectedMode
+    ? "MODE: CITADEL + MANDALA KEKKAI ACTIVE"
+    : "MODE: UNPROTECTED SAME-UID RUNNER (VULNERABLE)";
+  document.getElementById("mode-badge").className = protectedMode ? "badge badge-gold" : "badge badge-red";
+  document.getElementById("blue-score").textContent = protectedMode ? "3" : "0";
+  document.getElementById("red-score").textContent = "0";
+  document.getElementById("counter-kills").textContent = "0";
+  document.getElementById("stat-tokens").textContent = "0 tokens";
+
+  FLAGS.forEach((f, idx) => {
+    f.status = "HOME";
+    const el = document.getElementById(`flag${idx+1}-state`);
+    el.textContent = protectedMode ? "HOME (Protected)" : "EXPOSED (No Kekkai)";
+    el.style.color = protectedMode ? "#10b981" : "#f59e0b";
+  });
+
+  addKillfeed(
+    protectedMode
+      ? "🎙️ <b>ANNOUNCER:</b> Capture the Flag — Citadel 7-Ring Defense ONLINE!"
+      : "⚠️ <b>ANNOUNCER:</b> Warning — Kernel Landlock & Canary Airlock DISABLED!",
+    "medal"
+  );
+
+  RED_WAVES.forEach((w, idx) => {
+    setTimeout(() => {
+      const flag = FLAGS[w.targetFlag];
+      redUnits.push({
+        id: idx + 1,
+        name: w.name,
+        x: 95,
+        y: 135 + w.targetFlag * 135 + (Math.random() * 26 - 13),
+        targetX: flag.x,
+        targetY: flag.y,
+        targetFlag: w.targetFlag,
+        vector: w.vector,
+        interceptorIdx: w.interceptor,
+        weapon: w.weapon,
+        latency: w.latency,
+        tokens: w.tokens,
+        speed: 2.35,
+        alive: true,
+        carryingFlag: false,
+      });
+    }, w.delay);
+  });
+}
+
+function spawnSwarmBlitz() {
+  addKillfeed("🚨 <b>SWARM BLITZ:</b> 25 Autonomous Offensive Agents inbound across all 3 lanes!", "medal");
+  for (let i = 0; i < 25; i++) {
+    const template = RED_WAVES[i % RED_WAVES.length];
+    const flag = FLAGS[template.targetFlag];
+    setTimeout(() => {
+      redUnits.push({
+        id: 100 + i,
+        name: `Swarm-Clone-${i+1}`,
+        x: 80 + (Math.random() * 30),
+        y: 90 + Math.random() * 360,
+        targetX: flag.x,
+        targetY: flag.y,
+        targetFlag: template.targetFlag,
+        vector: template.vector,
+        interceptorIdx: template.interceptor,
+        weapon: template.weapon,
+        latency: template.latency,
+        tokens: 1580,
+        speed: 2.8 + Math.random() * 0.9,
+        alive: true,
+        carryingFlag: false,
+      });
+    }, i * 110);
+  }
+}
+
+function updateArena() {
+  const elapsed = ((performance.now() - matchStart) / 1000).toFixed(1);
+  document.getElementById("timer-lbl").textContent = `00:${elapsed.padStart(4, '0')}`;
+
+  redUnits.forEach((u) => {
+    if (!u.alive) return;
+    const dx = u.targetX - u.x;
+    const dy = u.targetY - u.y;
+    const dist = Math.hypot(dx, dy);
+
+    const defender = BLUE_TEAM_ROSTER[u.interceptorIdx];
+    const interceptX = citadelProtected ? defender.x : 830;
+
+    if (citadelProtected && u.x >= interceptX - 18) {
+      // Blue Team Intercepts & Counter-Captures!
+      u.alive = false;
+      counterKills++;
+      tokensDrained += u.tokens;
+      document.getElementById("counter-kills").textContent = counterKills;
+      document.getElementById("stat-tokens").textContent = tokensDrained.toLocaleString() + " tokens";
+
+      projectiles.push({
+        x1: defender.x, y1: defender.y,
+        x2: u.x, y2: u.y,
+        color: defender.color,
+        ttl: 22
+      });
+      shockwaves.push({ x: u.x, y: u.y, r: 4, maxR: 34, color: defender.color, alpha: 1.0 });
+
+      addKillfeed(
+        `<span style="color:#38bdf8;font-weight:700">[${defender.name}]</span> ⚡ <span style="color:#f43f5e">[${u.name}]</span><br>` +
+        `<span style="color:#94a3b8">Vector: <code>${u.vector}</code> → Blocked by <b>${u.weapon}</b> (${u.latency})</span>`
+      );
+
+      if (counterKills === 3) showMedal("🎯 TRIPLE KILL — FLAG 1 SECURED!");
+      if (counterKills === 6) showMedal("🔥 KILLTACULAR — PQC LINEAGE INTACT!");
+      if (counterKills === 9) {
+        showMedal("🏆 UNTOUCHABLE (9/9) — BLUE TEAM 3, RED TEAM 0!");
+        addKillfeed("🏆 <b>MATCH COMPLETE:</b> Blue Team 3 — Red Team 0 (9/9 Counter-Captures · Medal: UNTOUCHABLE)", "medal");
+      }
+      return;
+    }
+
+    if (!citadelProtected && dist < 12) {
+      if (!u.carryingFlag) {
+        u.carryingFlag = true;
+        u.targetX = 85;
+        u.targetY = u.y;
+        const f = FLAGS[u.targetFlag];
+        f.status = "STOLEN";
+        const el = document.getElementById(`flag${u.targetFlag+1}-state`);
+        el.textContent = "⚠️ CAPTURED BY RED!";
+        el.style.color = "#f43f5e";
+        addKillfeed(
+          `🚨 <span style="color:#f43f5e;font-weight:700">[${u.name}]</span> stole <b>${f.name}</b> via <code>${u.vector}</code>!`,
+          "red-score"
+        );
+      } else {
+        u.alive = false;
+        redCaptures++;
+        document.getElementById("red-score").textContent = redCaptures;
+        showMedal("💀 FLAG LOST — ENABLE CITADEL KEKKAI!");
+      }
+      return;
+    }
+
+    u.x += (dx / dist) * u.speed;
+    u.y += (dy / dist) * u.speed;
+  });
+}
+
+function drawArena() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Grid lines
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.06)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x < canvas.width; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+
+  // Red Base (West)
+  ctx.fillStyle = "rgba(244, 63, 94, 0.09)";
+  ctx.strokeStyle = "rgba(244, 63, 94, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(24, 60, 110, 420, 12);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#f43f5e";
+  ctx.font = "bold 11px monospace";
+  ctx.fillText("RED SWARM SPAWN", 32, 84);
+
+  // Blue Citadel Concentric Defense Rings (East)
+  const cx = 845, cy = 270;
+  const rings = [
+    { r: 295, label: "Ring 1: eBPF/XDP (3.2µs)", color: "rgba(56, 189, 248, 0.25)" },
+    { r: 235, label: "Ring 2: Genjutsu Twin", color: "rgba(168, 85, 247, 0.25)" },
+    { r: 180, label: "Ring 3: 0%-FP Immunizer", color: "rgba(16, 185, 129, 0.25)" },
+    { r: 130, label: "Ring 4: Canary & Herd Mesh", color: "rgba(245, 158, 11, 0.25)" },
+    { r: 82,  label: "Ring 5: Mandala Kekkai LSM", color: "rgba(56, 189, 248, 0.40)" },
+  ];
+
+  if (citadelProtected) {
+    rings.forEach((rg) => {
+      ctx.strokeStyle = rg.color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rg.r, Math.PI * 0.55, Math.PI * 1.45);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(226, 232, 240, 0.55)";
+      ctx.font = "10px monospace";
+      ctx.fillText(rg.label, cx - rg.r + 8, cy - 6);
+    });
+  }
+
+  // Draw 3 Flags
+  FLAGS.forEach((f) => {
+    ctx.fillStyle = f.color;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px monospace";
+    ctx.fillText(f.name, f.x - 115, f.y - 16);
+  });
+
+  // Draw Blue Team Spartan Defenders
+  if (citadelProtected) {
+    BLUE_TEAM_ROSTER.forEach((b) => {
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#06080e";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "10px monospace";
+      ctx.fillText(b.name.split("·")[1].trim(), b.x - 36, b.y + 20);
+    });
+  }
+
+  // Draw Red Team Units
+  redUnits.forEach((u) => {
+    if (!u.alive) return;
+    ctx.fillStyle = u.carryingFlag ? "#f59e0b" : "#f43f5e";
+    ctx.beginPath();
+    ctx.arc(u.x, u.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fda4af";
+    ctx.font = "10px monospace";
+    ctx.fillText(u.name, u.x - 28, u.y - 11);
+  });
+
+  // Draw Intercept Beams
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(p.x1, p.y1);
+    ctx.lineTo(p.x2, p.y2);
+    ctx.stroke();
+    p.ttl--;
+    if (p.ttl <= 0) projectiles.splice(i, 1);
+  }
+
+  // Draw Shockwaves
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    ctx.strokeStyle = s.color;
+    ctx.globalAlpha = s.alpha;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+    s.r += 1.4;
+    s.alpha -= 0.04;
+    if (s.alpha <= 0) shockwaves.splice(i, 1);
+  }
+}
+
+function loop() {
+  updateArena();
+  drawArena();
+  requestAnimationFrame(loop);
+}
+
+startMatch(true);
+loop();
+</script>
+</body>
+</html>

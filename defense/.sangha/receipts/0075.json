@@ -1,0 +1,19 @@
+{
+  "spec": "continuity-receipt/0.5",
+  "receipt_id": "urn:uuid:01a159cf-54b5-70a5-bb8b-7bb6b5738cab",
+  "task_id": "sangha-seq-75",
+  "issued_at": "2026-10-20T14:55:22Z",
+  "issuer": {
+    "kind": "agent",
+    "id": "did:key:sangha:antigravity@T4800-S"
+  },
+  "type": "state.commitment",
+  "seq": 75,
+  "prev": null,
+  "body": {
+    "state_kind": "claim",
+    "scope": "crates/engine",
+    "count": 1,
+    "head_digest": "sha256:99b4c6eb23416b1f8e30a886c60baa14c7b364de40dfc98a9c0c08669df4dff4"
+  }
+}
