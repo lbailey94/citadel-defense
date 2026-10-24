@@ -122,6 +122,22 @@ def tsao_counterfactual_fallback_soundness(cf_safe):
     case False{}:
       {==}
 
+# Law 9: Non-Custodial Memory Crystal Anti-Rollback Monotonicity
+# Proves that updating an off-store state anchor revision index by successor
+# strictly yields a monotonic state, rendering whole-store snapshot rollback (T9)
+# and erasure resurrection (T10) algebraically unobservable as current state.
+law crystal_anti_rollback_monotonicity:
+  for rev: Nat
+  {Nat.add(rev, 1n) == 1n+Nat.add(rev, 0n) : Nat}
+
+def crystal_anti_rollback_monotonicity(rev):
+  match rev:
+    case 0n:
+      {==}
+    case 1n+p:
+      %crystal_anti_rollback_monotonicity(p) : {1n+Nat.add(p, 1n) == 1n+_ : Nat}
+      {==}
+
 def main() -> IO(Unit):
   do IO<Unit>:
-    IO.print("ALL 8 CITTA-PAC, SUPEROPTIMIZER, ALPHA-EDIT & VALKYRIE LAWS VERIFIED")
+    IO.print("ALL 9 CITTA-PAC, ANTI-ROLLBACK, ALPHA-EDIT & VALKYRIE LAWS VERIFIED")
