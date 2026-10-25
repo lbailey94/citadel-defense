@@ -30,16 +30,22 @@ def generate_insurability_pack(
     target_dir = out_dir or (STATE_DIR / "insurability-packs" / f"INSURABILITY_PACK_{slug}_{now:%Y-%m-%d}")
     target_dir.mkdir(parents=True, exist_ok=True)
     evidence = validate_evidence_manifest(evidence_manifest, now=now)
+    benchmark_record = evidence.get("artifacts", {}).get("benchmark", {})
+    if benchmark_record.get("status") == "VERIFIED_INTEGRITY":
+        benchmark = benchmark_record["benchmark"]
+    elif benchmark_record:
+        benchmark = {"status": "INVALID_OR_UNAVAILABLE", "reason": benchmark_record.get("reason", "benchmark evidence invalid")}
+    elif evidence.get("status") in {"INVALID", "STALE", "INVALID_OR_UNAVAILABLE"}:
+        benchmark = {"status": "INVALID_OR_UNAVAILABLE", "reason": evidence.get("reason", "evidence manifest invalid or unavailable")}
+    else:
+        benchmark = {"status": "UNAVAILABLE", "reason": "no benchmark artifact was supplied and validated"}
     pack = {
         "schema": "violet.insurability-pack/v2",
         "client": client_name,
         "generated_at": now.isoformat(),
         "evidence_manifest": str(evidence_manifest.resolve()) if evidence_manifest else None,
         "evidence_validation": evidence,
-        "benchmark": {
-            "status": "UNAVAILABLE",
-            "reason": "no benchmark artifact was supplied and validated",
-        },
+        "benchmark": benchmark,
         "compliance_mappings": {
             "AIUC_1": ["E015.4", "S004.2"],
             "EU_AI_ACT": ["Article 12", "Article 50"],
@@ -75,7 +81,10 @@ def generate_insurability_pack(
         f"# VIOLET Evidence Inventory — `{client_name}`", "",
         f"- Generated: `{now.isoformat()}`",
         f"- Evidence validation: `{evidence['status']}`",
-        f"- Benchmark: `UNAVAILABLE` (no validated benchmark supplied)",
+        f"- Benchmark: `{benchmark['status']}`" + (
+            f" ({benchmark.get('passed')}/{benchmark.get('total')} recorded cases passed; local integrity only)"
+            if benchmark.get("status") == "RECORDED_LOCAL_RESULTS" else f" ({benchmark.get('reason')})"
+        ),
         f"- Local signature: `{'VERIFIED_INTEGRITY_ONLY' if self_verified else 'FAILED'}`",
         "- External trusted peer: `NOT ESTABLISHED`",
         "- Compliance assessment: `NOT ASSESSED`", "",
