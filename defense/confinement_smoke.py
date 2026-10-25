@@ -4,12 +4,12 @@
 Runs mocked fail-closed setup checks on any platform, plus a real Linux
 Landlock filesystem check when run on Linux with Landlock enabled.
 """
+
 from __future__ import annotations
 
 import ctypes
 import errno
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -30,7 +30,10 @@ class FakeSyscall:
         self.restype = None
 
     def __call__(self, number: int, *args) -> int:
-        if number == launcher.SYS_LANDLOCK_CREATE_RULESET and args[-1] == launcher.LANDLOCK_CREATE_RULESET_VERSION:
+        if (
+            number == launcher.SYS_LANDLOCK_CREATE_RULESET
+            and args[-1] == launcher.LANDLOCK_CREATE_RULESET_VERSION
+        ):
             if self.stage == "abi":
                 ctypes.set_errno(errno.EPERM)
                 return -1
@@ -77,7 +80,9 @@ class LauncherSetupTests(unittest.TestCase):
                 with self.subTest(stage=stage):
                     fake_libc = FakeLibc(stage)
                     with (
-                        mock.patch.object(launcher.ctypes, "CDLL", return_value=fake_libc),
+                        mock.patch.object(
+                            launcher.ctypes, "CDLL", return_value=fake_libc
+                        ),
                         mock.patch.object(launcher.os, "open", return_value=88),
                         mock.patch.object(launcher.os, "close"),
                         mock.patch.object(launcher.subprocess, "run") as child_run,
@@ -89,7 +94,11 @@ class LauncherSetupTests(unittest.TestCase):
     def test_unsupported_platform_refuses_without_exec(self) -> None:
         with (
             mock.patch.object(launcher.sys, "platform", "unknown-os"),
-            mock.patch.object(launcher.sys, "argv", ["launcher", "--workspace", ".", "--", "must-not-run"]),
+            mock.patch.object(
+                launcher.sys,
+                "argv",
+                ["launcher", "--workspace", ".", "--", "must-not-run"],
+            ),
             mock.patch.object(launcher.os, "execvp") as unconfined_exec,
             mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as stderr,
         ):
@@ -98,41 +107,60 @@ class LauncherSetupTests(unittest.TestCase):
             unconfined_exec.assert_not_called()
 
     def test_missing_macos_backend_refuses_without_child_execution(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="kekkai-smoke-workspace-") as workspace:
-            with (
-                mock.patch.object(launcher.shutil, "which", return_value=None),
-                mock.patch.object(launcher.os.path, "isfile", return_value=False),
-                mock.patch.object(launcher.subprocess, "run") as child_run,
-            ):
-                with self.assertRaisesRegex(RuntimeError, "refusing unconfined execution"):
-                    launcher.exec_darwin_seatbelt(workspace, ["must-not-run"])
-                child_run.assert_not_called()
+        with (
+            tempfile.TemporaryDirectory(prefix="kekkai-smoke-workspace-") as workspace,
+            mock.patch.object(launcher.shutil, "which", return_value=None),
+            mock.patch.object(launcher.os.path, "isfile", return_value=False),
+            mock.patch.object(launcher.subprocess, "run") as child_run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "refusing unconfined execution"):
+                launcher.exec_darwin_seatbelt(workspace, ["must-not-run"])
+            child_run.assert_not_called()
 
-    def test_broad_workspace_scopes_refuse_on_linux_and_darwin_before_child(self) -> None:
+    def test_broad_workspace_scopes_refuse_on_linux_and_darwin_before_child(
+        self,
+    ) -> None:
         home = Path.home().resolve(strict=True)
         broad_scopes = list(dict.fromkeys((Path("/"), home.parent, home)))
         for platform_name in ("linux", "darwin"):
             for workspace in broad_scopes:
-                with self.subTest(platform=platform_name, workspace=str(workspace)):
-                    with (
-                        mock.patch.object(launcher.sys, "platform", platform_name),
-                        mock.patch.object(launcher.sys, "argv", ["launcher", "--workspace", str(workspace), "--", "must-not-run"]),
-                        mock.patch.object(launcher.subprocess, "run") as child_run,
-                        mock.patch.object(launcher.tempfile, "mkdtemp") as make_temp,
-                        mock.patch.object(launcher, "apply_linux_landlock") as install_landlock,
-                        mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as stderr,
-                    ):
-                        self.assertEqual(launcher.main(), 126)
-                        self.assertIn("contains the current user's home", stderr.getvalue())
-                        child_run.assert_not_called()
-                        make_temp.assert_not_called()
-                        install_landlock.assert_not_called()
+                with (
+                    self.subTest(platform=platform_name, workspace=str(workspace)),
+                    mock.patch.object(launcher.sys, "platform", platform_name),
+                    mock.patch.object(
+                        launcher.sys,
+                        "argv",
+                        [
+                            "launcher",
+                            "--workspace",
+                            str(workspace),
+                            "--",
+                            "must-not-run",
+                        ],
+                    ),
+                    mock.patch.object(launcher.subprocess, "run") as child_run,
+                    mock.patch.object(launcher.tempfile, "mkdtemp") as make_temp,
+                    mock.patch.object(
+                        launcher, "apply_linux_landlock"
+                    ) as install_landlock,
+                    mock.patch(
+                        "sys.stderr", new_callable=__import__("io").StringIO
+                    ) as stderr,
+                ):
+                    self.assertEqual(launcher.main(), 126)
+                    self.assertIn("contains the current user's home", stderr.getvalue())
+                    child_run.assert_not_called()
+                    make_temp.assert_not_called()
+                    install_landlock.assert_not_called()
 
 
 class HostLandlockTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux Landlock")
     def test_external_read_is_denied_workspace_read_is_allowed(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="kekkai-smoke-workspace-") as workspace, tempfile.TemporaryDirectory(prefix="kekkai-smoke-external-") as external:
+        with (
+            tempfile.TemporaryDirectory(prefix="kekkai-smoke-workspace-") as workspace,
+            tempfile.TemporaryDirectory(prefix="kekkai-smoke-external-") as external,
+        ):
             workspace_path = Path(workspace)
             external_sentinel = Path(external) / "owned-readable-sentinel.txt"
             workspace_sentinel = workspace_path / "owned-workspace-sentinel.txt"
@@ -150,29 +178,54 @@ else:
     raise SystemExit("external sentinel remained readable")
 """
             control = subprocess.run(
-                [sys.executable, "-c", "from pathlib import Path; import sys; assert Path(sys.argv[1]).read_text() == 'external sentinel'", str(external_sentinel)],
+                [
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; import sys; assert Path(sys.argv[1]).read_text() == 'external sentinel'",
+                    str(external_sentinel),
+                ],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertEqual(control.returncode, 0, control.stderr)
-            print(f"UNCONFINED_CONTROL external_sentinel_readable exit={control.returncode}")
+            print(
+                f"UNCONFINED_CONTROL external_sentinel_readable exit={control.returncode}"
+            )
 
             actual = subprocess.run(
                 [
                     sys.executable,
                     str(HERE / "opencode_kekkai_launcher.py"),
-                    "--workspace", workspace,
-                    "--", sys.executable, "-c", probe,
-                    str(external_sentinel), str(workspace_sentinel), "unused",
+                    "--workspace",
+                    workspace,
+                    "--",
+                    sys.executable,
+                    "-c",
+                    probe,
+                    str(external_sentinel),
+                    str(workspace_sentinel),
+                    "unused",
                 ],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertEqual(actual.returncode, 0, actual.stderr)
             self.assertIn('"backend": "Landlock"', actual.stderr)
             self.assertIn('"network": "unrestricted by this launcher', actual.stderr)
-            policy_line = next(line for line in actual.stderr.splitlines() if line.startswith("KEKKAI_POLICY "))
-            print("LANDLOCK_POLICY " + json.dumps(json.loads(policy_line.removeprefix("KEKKAI_POLICY ")), sort_keys=True))
+            policy_line = next(
+                line
+                for line in actual.stderr.splitlines()
+                if line.startswith("KEKKAI_POLICY ")
+            )
+            print(
+                "LANDLOCK_POLICY "
+                + json.dumps(
+                    json.loads(policy_line.removeprefix("KEKKAI_POLICY ")),
+                    sort_keys=True,
+                )
+            )
             print("LANDLOCK_SMOKE allowed_workspace=1 denied_external=1")
 
 

@@ -16,10 +16,17 @@ os.environ["VIOLET_STATE_DIR"] = str(_ROOT / "state")
 os.environ["VIOLET_KEY_PATH"] = str(_ROOT / "keys" / "canary.key")
 os.environ["VIOLET_PQC_KEY_PATH"] = str(_ROOT / "keys" / "pqc.key")
 
-from canary_manager import CanaryManager  # noqa: E402
-import canary_manager  # noqa: E402
-from evidence_validation import BENCHMARK_SCHEMA, PIN_SCHEMA, validate_evidence_manifest  # noqa: E402
-from violet_insurability_pack import generate_insurability_pack, verify_insurability_pack  # noqa: E402
+import canary_manager
+from canary_manager import CanaryManager
+from evidence_validation import (
+    BENCHMARK_SCHEMA,
+    PIN_SCHEMA,
+    validate_evidence_manifest,
+)
+from violet_insurability_pack import (
+    generate_insurability_pack,
+    verify_insurability_pack,
+)
 
 
 class EvidenceTruthSmoke(unittest.TestCase):

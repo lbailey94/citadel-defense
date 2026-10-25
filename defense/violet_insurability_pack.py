@@ -14,8 +14,11 @@ DEFENSE_DIR = Path(__file__).resolve().parent
 if str(DEFENSE_DIR) not in sys.path:
     sys.path.insert(0, str(DEFENSE_DIR))
 
-from evidence_validation import strict_json_loads, validate_evidence_manifest  # noqa: E402
-from violet_pqc import GroverProofDualLedger, HybridCompositeSigner  # noqa: E402
+from evidence_validation import (
+    strict_json_loads,
+    validate_evidence_manifest,
+)
+from violet_pqc import GroverProofDualLedger, HybridCompositeSigner
 
 STATE_DIR = Path(os.environ.get("VIOLET_STATE_DIR", os.path.expanduser("~/.local/state/whitemagic")))
 

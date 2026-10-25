@@ -328,6 +328,7 @@ def exec_darwin_seatbelt(workspace: str, cmd: list[str]) -> int:
             [sandbox_bin, "-p", profile, "--", *cmd],
             cwd=str(workspace_path),
             env=child_env,
+            check=False,
         ).returncode)
     finally:
         shutil.rmtree(private_tmp)
@@ -345,7 +346,7 @@ def exec_linux_confined(workspace: str, cmd: list[str]) -> int:
         child_env["TMPDIR"] = private_tmp
         child_env["TMP"] = private_tmp
         child_env["TEMP"] = private_tmp
-        return int(subprocess.run(cmd, cwd=str(workspace_path), env=child_env).returncode)
+        return int(subprocess.run(cmd, cwd=str(workspace_path), env=child_env, check=False).returncode)
     finally:
         # The private directory itself is explicitly writable by the restricted process.
         shutil.rmtree(private_tmp)
