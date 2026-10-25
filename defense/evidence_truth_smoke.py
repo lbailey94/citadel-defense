@@ -138,6 +138,18 @@ class EvidenceTruthSmoke(unittest.TestCase):
         manifest["max_age_seconds"] = float("nan")
         pins.write_text(json.dumps(manifest), encoding="utf-8")
         self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        for max_age in (True, -1):
+            _, pins = self._make_pinned_artifact()
+            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            manifest["max_age_seconds"] = max_age
+            pins.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        for max_age in (True, -1):
+            _, pins = self._make_pinned_artifact()
+            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            manifest["artifacts"]["receipt"]["max_age_seconds"] = max_age
+            pins.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
 
         for constant in ("NaN", "Infinity", "-Infinity"):
             _, pins = self._make_pinned_artifact()
@@ -147,6 +159,14 @@ class EvidenceTruthSmoke(unittest.TestCase):
 
         artifact, pins = self._make_pinned_artifact()
         artifact.write_text('{"schema":"test.receipt/v1","schema":"test.receipt/v1"}', encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        artifact, pins = self._make_pinned_artifact()
+        receipt = json.loads(artifact.read_text(encoding="utf-8"))
+        artifact.write_text(json.dumps(receipt).replace('"count": 2', '"count": NaN'), encoding="utf-8")
         manifest = json.loads(pins.read_text(encoding="utf-8"))
         manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
         pins.write_text(json.dumps(manifest), encoding="utf-8")
@@ -211,6 +231,14 @@ class EvidenceTruthSmoke(unittest.TestCase):
         self.assertNotIn("8/8", report)
         bundle["pack"]["benchmark"]["status"] = "PASS"
         path.write_text(json.dumps(bundle), encoding="utf-8")
+        self.assertFalse(verify_insurability_pack(path))
+
+        result = generate_insurability_pack("duplicate", self.root / "duplicate-pack", pins)
+        path = Path(result["manifest_json"])
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8").rstrip()
+        raw = raw[:-1] + ',"canonical_sha256":' + json.dumps(bundle["canonical_sha256"]) + "}"
+        path.write_text(raw, encoding="utf-8")
         self.assertFalse(verify_insurability_pack(path))
 
     def test_benchmark_missing_stale_tampered_and_inconsistent_stay_nonpassing(self):

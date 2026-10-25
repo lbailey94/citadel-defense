@@ -33,7 +33,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict:
     return result
 
 
-def _strict_loads(content: bytes) -> Any:
+def strict_json_loads(content: bytes | str) -> Any:
     return json.loads(content, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
 
 
@@ -61,7 +61,7 @@ def validate_evidence_manifest(manifest_path: Path | None, now: datetime | None 
         return {"status": "UNAVAILABLE", "reason": "no explicit evidence pin manifest supplied", "artifacts": {}}
     try:
         raw = manifest_path.read_bytes()
-        manifest = _strict_loads(raw)
+        manifest = strict_json_loads(raw)
     except (OSError, UnicodeError, ValueError) as exc:
         return {"status": "INVALID", "reason": f"pin manifest unreadable: {type(exc).__name__}", "artifacts": {}}
     if not isinstance(manifest, dict) or manifest.get("schema") != PIN_SCHEMA:
@@ -105,7 +105,7 @@ def validate_evidence_manifest(manifest_path: Path | None, now: datetime | None 
                 try:
                     target.relative_to(manifest_path.parent.resolve())
                     content = target.read_bytes()
-                    data = _strict_loads(content)
+                    data = strict_json_loads(content)
                     if hashlib.sha256(content).hexdigest() != digest.lower():
                         details["reason"] = "digest mismatch"
                     elif not isinstance(data, dict) or data.get("schema") != expected_schema:

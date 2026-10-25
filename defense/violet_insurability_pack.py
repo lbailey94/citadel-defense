@@ -14,7 +14,7 @@ DEFENSE_DIR = Path(__file__).resolve().parent
 if str(DEFENSE_DIR) not in sys.path:
     sys.path.insert(0, str(DEFENSE_DIR))
 
-from evidence_validation import validate_evidence_manifest  # noqa: E402
+from evidence_validation import strict_json_loads, validate_evidence_manifest  # noqa: E402
 from violet_pqc import GroverProofDualLedger, HybridCompositeSigner  # noqa: E402
 
 STATE_DIR = Path(os.environ.get("VIOLET_STATE_DIR", os.path.expanduser("~/.local/state/whitemagic")))
@@ -108,7 +108,7 @@ def generate_insurability_pack(
 
 def verify_insurability_pack(manifest_path: Path) -> bool:
     try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        data = strict_json_loads(manifest_path.read_bytes())
         pack = data["pack"]
         canonical = json.dumps(pack, sort_keys=True, separators=(",", ":")).encode()
         if hashlib.sha256(canonical).hexdigest() != data.get("canonical_sha256"):
