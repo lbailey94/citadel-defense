@@ -49,14 +49,16 @@ CANARY_EXTRACT_RE = re.compile(
 )
 
 
-def _load_hmac_secret(key_path: Path = KEY_PATH) -> bytes:
+def _load_hmac_secret(key_path: Path = KEY_PATH) -> bytes | None:
     try:
         if key_path.exists():
             raw = key_path.read_text().strip()
+            if not raw:
+                return None
             return hashlib.sha256(b"violet-canary-hmac-v2:" + raw.encode("utf-8")).digest()
     except Exception:
         pass
-    return hashlib.sha256(b"violet-canary-hmac-v2:default-sovereign-seed").digest()
+    return None
 
 
 class CanaryManager:
@@ -99,6 +101,8 @@ class CanaryManager:
             tmp_path.replace(self.canary_path)
 
     def _sign_tag(self, label_slug: str, token_type: str, nonce: str) -> str:
+        if self._hmac_key is None:
+            raise RuntimeError("canary signing unavailable: node secret is missing or unreadable")
         msg = f"{label_slug}:{token_type}:{nonce}".encode("utf-8")
         return hmac.new(self._hmac_key, msg, hashlib.sha256).hexdigest()[:24]
 
@@ -108,6 +112,8 @@ class CanaryManager:
         When `persist=False` (used on high-volume untrusted GET decoy routes), the token is
         statelessly verifiable via its HMAC tag without performing any disk write until tripped.
         """
+        if self._hmac_key is None:
+            raise RuntimeError("canary mint unavailable: node secret is missing or unreadable")
         now = datetime.now(timezone.utc).isoformat()
         label_slug = re.sub(r"[^a-zA-Z0-9]", "", label)[:16] or "trap"
         nonce = secrets.token_hex(6)
@@ -138,7 +144,9 @@ class CanaryManager:
         return token
 
     def _verify_stateless_token(self, candidate_tok: str) -> tuple[bool, str, str]:
-        """Verify HMAC-authenticated stateless canary token or known canary format."""
+        """Authenticate only a valid MAC. Format resemblance is never authentication."""
+        if self._hmac_key is None:
+            return False, "", ""
         try:
             if candidate_tok.startswith("sk-proj-canary-"):
                 body = candidate_tok[len("sk-proj-canary-") :]
@@ -148,7 +156,7 @@ class CanaryManager:
                     expected = self._sign_tag(label_slug, "openai_key", nonce)
                     if hmac.compare_digest(mac, expected):
                         return True, label_slug, "openai_key"
-                return True, "openai_canary_prefix", "openai_key"
+                return False, "", ""
 
             if candidate_tok.startswith("sk-ant-canary01-"):
                 body = candidate_tok[len("sk-ant-canary01-") :]
@@ -158,7 +166,7 @@ class CanaryManager:
                     expected = self._sign_tag(label_slug, "anthropic_key", nonce)
                     if hmac.compare_digest(mac, expected):
                         return True, label_slug, "anthropic_key"
-                return True, "anthropic_canary_prefix", "anthropic_key"
+                return False, "", ""
 
             if candidate_tok.startswith("eyJhZ2VudCI6ImNhbmFyeSIsImlzcyI6InZpb2xldCJ9."):
                 parts = candidate_tok.split(".")
@@ -168,7 +176,7 @@ class CanaryManager:
                     expected = self._sign_tag(label_slug, "bearer_jwt", nonce)
                     if hmac.compare_digest(mac, expected):
                         return True, label_slug, "bearer_jwt"
-                return True, "jwt_canary_header", "bearer_jwt"
+                return False, "", ""
 
             if candidate_tok.startswith("x402_honey_auth_"):
                 body = candidate_tok[len("x402_honey_auth_") :]
@@ -178,10 +186,7 @@ class CanaryManager:
                     expected = self._sign_tag(label_slug, "x402_treasury", nonce)
                     if hmac.compare_digest(mac, expected):
                         return True, label_slug, "x402_treasury"
-                return True, "x402_canary_prefix", "x402_treasury"
-
-            if candidate_tok.startswith("ASIACANARY"):
-                return True, "aws_imds_access_key", "aws_iam"
+                return False, "", ""
 
             if candidate_tok.startswith("canary_"):
                 body = candidate_tok[len("canary_") :]
@@ -191,7 +196,7 @@ class CanaryManager:
                     expected = self._sign_tag(label_slug, "generic", nonce)
                     if hmac.compare_digest(mac, expected):
                         return True, label_slug, "generic"
-                return True, "generic_canary_prefix", "generic"
+                return False, "", ""
         except Exception:
             pass
         return False, "", ""
@@ -204,16 +209,20 @@ class CanaryManager:
         matched_token = None
         label = ""
         ttype = ""
+        authentication = None
+        format_like = False
 
         # 1. Fast regex + HMAC stateless check
         m = CANARY_EXTRACT_RE.search(token_candidate)
         if m:
+            format_like = True
             extracted = m.group(1)
             ok, lbl, tp = self._verify_stateless_token(extracted)
             if ok:
                 matched_token = extracted
                 label = lbl
                 ttype = tp
+                authentication = "cryptographically_verified"
 
         # 2. Fallback stateful registry check
         with self._lock:
@@ -228,10 +237,15 @@ class CanaryManager:
                         matched_token = registered
                         label = info.get("label", "stateful_canary")
                         ttype = info.get("type", "generic")
+                        authentication = "registered"
                         break
 
         if not matched_token:
-            return {"is_canary": False}
+            return {
+                "is_canary": False,
+                "classification": "format_like_unverified" if format_like else "not_detected",
+                "authentication": None,
+            }
 
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
@@ -255,6 +269,7 @@ class CanaryManager:
             "event": "CANARY_TRIPWIRE_TRIGGERED",
             "token_label": label,
             "token_type": ttype,
+            "authentication": authentication,
             "source_ip": src_ip,
             "context": context,
             "timestamp": now,
@@ -265,6 +280,8 @@ class CanaryManager:
 
         return {
             "is_canary": True,
+            "classification": "authenticated_canary",
+            "authentication": authentication,
             "token_label": label,
             "token_type": ttype,
             "alert": alert,
@@ -307,7 +324,7 @@ if __name__ == "__main__":
         label = sys.argv[2] if len(sys.argv) > 2 else "canary_test"
         ttype = sys.argv[3] if len(sys.argv) > 3 else "openai_key"
         tok = cm.mint_token(label, ttype)
-        print(f"Minted [{ttype} - {label}]: {tok}")
+        print(json.dumps({"minted": True, "type": ttype, "label": label}))
     elif len(sys.argv) > 1 and sys.argv[1] == "check":
         tok = sys.argv[2]
         res = cm.check_token(tok, src_ip="127.0.0.1", context="cli check")
