@@ -132,6 +132,18 @@ def _access_names(mask: int) -> list[str]:
     return [name for bit, name in _ACCESS_NAMES if mask & bit]
 
 
+def _resolve_workspace(workspace: str) -> Path:
+    resolved = Path(workspace).resolve(strict=True)
+    if not resolved.is_dir():
+        raise ValueError(f"workspace is not a directory: {resolved}")
+    home = Path.home().resolve(strict=True)
+    if resolved == Path("/") or resolved == home or resolved in home.parents:
+        raise ValueError(
+            f"workspace {resolved} contains the current user's home {home}; refusing broad confinement scope"
+        )
+    return resolved
+
+
 def _supported_fs_access(abi: int) -> int:
     supported = _BASE_FS
     if abi >= 2:
@@ -187,10 +199,8 @@ def _add_linux_path_rule(
 
 def apply_linux_landlock(workspace: str, private_tmp: str) -> dict[str, object]:
     """Install Landlock on the calling process or raise before any child can run."""
-    workspace_path = Path(workspace).resolve(strict=True)
+    workspace_path = _resolve_workspace(workspace)
     private_tmp_path = Path(private_tmp).resolve(strict=True)
-    if not workspace_path.is_dir():
-        raise ValueError(f"workspace is not a directory: {workspace_path}")
     if not private_tmp_path.is_dir():
         raise ValueError(f"private temporary path is not a directory: {private_tmp_path}")
 
@@ -269,7 +279,7 @@ def apply_linux_landlock(workspace: str, private_tmp: str) -> dict[str, object]:
 def build_darwin_seatbelt_profile(workspace: str, home_dir: str | None = None) -> str:
     """Build a macOS Seatbelt profile for /usr/bin/sandbox-exec."""
     home = str(Path(home_dir).resolve()) if home_dir else str(Path.home().resolve())
-    ws = str(Path(workspace).resolve())
+    ws = str(_resolve_workspace(workspace))
 
     def sbpl_escape(value: str) -> str:
         return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -303,9 +313,7 @@ def build_darwin_seatbelt_profile(workspace: str, home_dir: str | None = None) -
 
 
 def exec_darwin_seatbelt(workspace: str, cmd: list[str]) -> int:
-    workspace_path = Path(workspace).resolve(strict=True)
-    if not workspace_path.is_dir():
-        raise ValueError(f"workspace is not a directory: {workspace_path}")
+    workspace_path = _resolve_workspace(workspace)
     profile = build_darwin_seatbelt_profile(workspace)
     sandbox_bin = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
     if not os.path.isfile(sandbox_bin) or not os.access(sandbox_bin, os.X_OK):
@@ -326,9 +334,7 @@ def exec_darwin_seatbelt(workspace: str, cmd: list[str]) -> int:
 
 
 def exec_linux_confined(workspace: str, cmd: list[str]) -> int:
-    workspace_path = Path(workspace).resolve(strict=True)
-    if not workspace_path.is_dir():
-        raise ValueError(f"workspace is not a directory: {workspace_path}")
+    workspace_path = _resolve_workspace(workspace)
     # A unique 0700 temp root inside the already-authorized workspace avoids
     # granting writes to shared /tmp just so the launcher can clean up afterward.
     private_tmp = tempfile.mkdtemp(prefix=".opencode-kekkai-tmp-", dir=str(workspace_path))
@@ -352,8 +358,12 @@ def main() -> int:
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     args = ap.parse_args()
     if args.print_darwin_profile:
-        print(build_darwin_seatbelt_profile(args.workspace), end="")
-        return 0
+        try:
+            print(build_darwin_seatbelt_profile(args.workspace), end="")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"opencode_kekkai_launcher: confinement failed: {exc}", file=sys.stderr)
+            return 126
 
     cmd = list(args.cmd)
     if cmd and cmd[0] == "--":

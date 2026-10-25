@@ -108,6 +108,26 @@ class LauncherSetupTests(unittest.TestCase):
                     launcher.exec_darwin_seatbelt(workspace, ["must-not-run"])
                 child_run.assert_not_called()
 
+    def test_broad_workspace_scopes_refuse_on_linux_and_darwin_before_child(self) -> None:
+        home = Path.home().resolve(strict=True)
+        broad_scopes = list(dict.fromkeys((Path("/"), home.parent, home)))
+        for platform_name in ("linux", "darwin"):
+            for workspace in broad_scopes:
+                with self.subTest(platform=platform_name, workspace=str(workspace)):
+                    with (
+                        mock.patch.object(launcher.sys, "platform", platform_name),
+                        mock.patch.object(launcher.sys, "argv", ["launcher", "--workspace", str(workspace), "--", "must-not-run"]),
+                        mock.patch.object(launcher.subprocess, "run") as child_run,
+                        mock.patch.object(launcher.tempfile, "mkdtemp") as make_temp,
+                        mock.patch.object(launcher, "apply_linux_landlock") as install_landlock,
+                        mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as stderr,
+                    ):
+                        self.assertEqual(launcher.main(), 126)
+                        self.assertIn("contains the current user's home", stderr.getvalue())
+                        child_run.assert_not_called()
+                        make_temp.assert_not_called()
+                        install_landlock.assert_not_called()
+
 
 class HostLandlockTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux Landlock")
