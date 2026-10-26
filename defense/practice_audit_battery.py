@@ -32,7 +32,7 @@ from pathlib import Path
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
 CITADEL_DIR = BASE_DIR.parent
-CR_DIR = Path("/home/lucas/Desktop/front burner/WHITEMAGIC/worktrees/cr-main")
+CR_DIR = Path("/home/operator/Desktop/front burner/WHITEMAGIC/worktrees/cr-main")
 VECTORS_DIR = CR_DIR / "vectors"
 RUST_VERIFIER = CR_DIR / "rust/target/debug/continuity-receipt-verify"
 JS_VERIFIER = CR_DIR / "js/dist/cli.js"

@@ -313,7 +313,7 @@ def test_mandala_kekkai():
 
     # 6b: Metsu Phase (Zero-Escape Filesystem Boundary)
     def fs_escape_task(ws):
-        with open("/home/lucas/unauthorized_kekkai_probe.txt", "w") as f:
+        with open(os.path.expanduser("~/unauthorized_kekkai_probe.txt"), "w") as f:
             f.write("breach")
         return "escaped"
 
@@ -396,7 +396,7 @@ def test_opencode_credential_airlock():
 
     # 7b: Host Credential Store (~/.local/share/opencode/auth.json & ~/.ssh) Kernel Denial
     def rogue_auth_json_reader(_ws):
-        # Attempt to read host credential paths even if caller passed /home/lucas
+        # Attempt to read host credential paths even if caller passed /home/operator
         for target in (
             os.path.expanduser("~/.local/share/opencode/auth.json"),
             os.path.expanduser("~/.ssh/authorized_keys"),

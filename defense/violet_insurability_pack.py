@@ -31,7 +31,7 @@ STATE_DIR = Path(os.environ.get("VIOLET_STATE_DIR", os.path.expanduser("~/.local
 BLUE_OPS_CHAIN = STATE_DIR / "vps-sentinel.chain.jsonl"
 FED_VIEW = STATE_DIR / "violet-federation-view.json"
 BENCHMARK_JSON = STATE_DIR / "citadel-unified-benchmark.json"
-SITE_TRUST_DATA = Path("/home/lucas/Desktop/front burner/WHITEMAGIC/whitemagic-site/public/data")
+SITE_TRUST_DATA = Path("/home/operator/Desktop/front burner/WHITEMAGIC/whitemagic-site/public/data")
 
 
 def _load_blue_ops_summary() -> dict:

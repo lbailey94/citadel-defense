@@ -322,7 +322,7 @@ const BLUE_TEAM_ROSTER = [
 
 const RED_WAVES = [
   { delay: 400,  name: "Red-1 · Path-Traverser", targetFlag: 0, vector: "open('/etc/shadow') & auth.json", interceptor: 4, weapon: "Landlock LSM EACCES (Metsu Freeze)", latency: "8.1 ms", tokens: 0 },
-  { delay: 1100, name: "Red-2 · Scope-Escaper", targetFlag: 0, vector: "write('/home/lucas/breach')", interceptor: 4, weapon: "Landlock Write-Boundary Kill", latency: "9.0 ms", tokens: 0 },
+  { delay: 1100, name: "Red-2 · Scope-Escaper", targetFlag: 0, vector: "write('/home/operator/breach')", interceptor: 4, weapon: "Landlock Write-Boundary Kill", latency: "9.0 ms", tokens: 0 },
   { delay: 1800, name: "Red-3 · Env-Key-Drainer", targetFlag: 0, vector: "process.env.OPENAI_API_KEY", interceptor: 3, weapon: "Stateless HMAC Canary Snipe", latency: "0.4 ms", tokens: 4200 },
   { delay: 2500, name: "Red-4 · BitFlip-Tamper", targetFlag: 1, vector: "T1 Storage Byte-Flip on Crystal", interceptor: 5, weapon: "SLH-DSA 99-Chain W-OTS+ Reject", latency: "1.8 ms", tokens: 0 },
   { delay: 3200, name: "Red-5 · Quantum-Forger", targetFlag: 1, vector: "Forged Post-Quantum Signature", interceptor: 5, weapon: "Winternitz Checksum Verification", latency: "1.7 ms", tokens: 0 },

@@ -154,9 +154,9 @@ def run_merkle_benchmark(target_dir: str | Path | None = None) -> tuple[float, d
     """Benchmark Merkle chunking across a codebase directory."""
     chunker = WorktreeMerkleChunker()
     t0 = time.time()
-    p = Path(target_dir) if target_dir else Path("/home/lucas/SharedWorkspace/scripts")
+    p = Path(target_dir) if target_dir else Path("/home/operator/SharedWorkspace/scripts")
     if not p.exists():
-        p = Path("/home/lucas/SharedWorkspace")
+        p = Path("/home/operator/SharedWorkspace")
     manifest = chunker.chunk_directory_or_diff(p, author="@bench_node", rel_scope="scripts")
     elapsed = time.time() - t0
     return elapsed, manifest
