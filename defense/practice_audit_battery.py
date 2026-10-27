@@ -32,10 +32,14 @@ from pathlib import Path
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
 CITADEL_DIR = BASE_DIR.parent
-CR_DIR = Path("/home/lucas/Desktop/front burner/WHITEMAGIC/worktrees/cr-main")
+CR_DIR = Path.home() / "Desktop/front burner/continuity-receipt"
+if not (CR_DIR / "vectors").exists():
+    CR_DIR = Path.home() / "Desktop/front burner/WHITEMAGIC/worktrees/cr-main"
 VECTORS_DIR = CR_DIR / "vectors"
-RUST_VERIFIER = CR_DIR / "rust/target/debug/continuity-receipt-verify"
-JS_VERIFIER = CR_DIR / "js/dist/cli.js"
+RUST_BIN = shutil.which("continuity-receipt-verify")
+RUST_VERIFIER = Path(RUST_BIN) if RUST_BIN else (CR_DIR / "rust/target/debug/continuity-receipt-verify")
+JS_CLI = Path.home() / "Desktop/front burner/WHITEMAGIC/worktrees/cr-main/js/dist/cli.js"
+JS_VERIFIER = JS_CLI if JS_CLI.exists() else (CR_DIR / "js/dist/cli.js")
 BEND_BIN = Path(os.path.expanduser("~/.local/bin/bend"))
 BEND_PROOFS = CITADEL_DIR / "proofs"
 OUTPUT_DIR = Path(os.path.expanduser("~/.local/state/whitemagic"))
@@ -76,7 +80,14 @@ def audit_pillar_1_differential() -> dict:
     vectors = sorted(list(VECTORS_DIR.glob("*.json")))
     if not vectors:
         print("  ✖ No vectors found!")
-        return {"passed": False, "score": 0.0, "total": 0}
+        return {
+            "pillar": "CPR Multi-Language Differential Conformance",
+            "passed": False,
+            "score_pct": 0.0,
+            "total_vectors": 0,
+            "divergences": 0,
+            "elapsed_ms": 0.0,
+        }
 
     total_vectors = len(vectors)
     py_pass, rs_pass, js_pass = 0, 0, 0
@@ -318,9 +329,10 @@ def audit_pillar_4_bend2() -> dict:
     )
     batch_elapsed = (time.time() - t_batch0) * 1000
     batch_passed = ("BATCH_CPR_DAG_VERIFIED" in res_batch.stdout)
+    batch_rate_str = f"~{(1_048_576 / (batch_elapsed / 1000.0) / 1e6):.2f}M receipts/sec" if batch_elapsed > 0 else "N/A"
     print(f"  ✓ Parallel CPR DAG Batch Engine   : {'PASS' if batch_passed else 'FAIL'}")
     print(f"  ✓ Evaluated Receipt Nodes         : 1,048,576 nodes (2^20 tree fold)")
-    print(f"  ✓ Batch Verification Throughput   : {batch_elapsed:.1f} ms (~2.75M receipts/sec)")
+    print(f"  ✓ Batch Verification Throughput   : {batch_elapsed:.1f} ms ({batch_rate_str})")
 
     # 3. Run swarm tree-fold benchmark
     t_swarm0 = time.time()
@@ -332,10 +344,11 @@ def audit_pillar_4_bend2() -> dict:
     )
     swarm_elapsed = (time.time() - t_swarm0) * 1000
     swarm_passed = ("SWARM_WARRANT_DIGEST" in res_swarm.stdout)
+    swarm_rate_str = f"~{(4_194_304 / (swarm_elapsed / 1000.0) / 1e6):.2f}M operations/sec" if swarm_elapsed > 0 else "N/A"
 
     print(f"  ✓ Parallel Tree-Fold Swarm Engine : {'PASS' if swarm_passed else 'FAIL'}")
     print(f"  ✓ Evaluated Swarm Leaf Clones     : 4,194,304 leaf nodes (8,388,607 tree nodes)")
-    print(f"  ✓ Parallel Tree-Fold Latency      : {swarm_elapsed:.1f} ms (~331.5M operations/sec)")
+    print(f"  ✓ Parallel Tree-Fold Latency      : {swarm_elapsed:.1f} ms ({swarm_rate_str})")
 
     elapsed_ms = (time.time() - t0) * 1000
     passed = laws_checked and batch_passed and swarm_passed
@@ -347,8 +360,10 @@ def audit_pillar_4_bend2() -> dict:
         "laws_checked": laws_checked,
         "batch_passed": batch_passed,
         "batch_elapsed_ms": round(batch_elapsed, 2),
+        "batch_rate_str": batch_rate_str,
         "swarm_passed": swarm_passed,
         "swarm_elapsed_ms": round(swarm_elapsed, 2),
+        "swarm_rate_str": swarm_rate_str,
         "elapsed_ms": round(elapsed_ms, 2),
     }
 
@@ -504,7 +519,7 @@ def run_practice_audit():
   2. *2-Tier Swarm Associativity:* Hierarchical arbitration algebraically matches flat arbitration.
   3. *Capability Attenuation:* Nested agent permissions strictly attenuate ($\text{{Cap}}(\text{{Child}}) \\subseteq \text{{Cap}}(\text{{Parent}})$).
   4. *Delta Stasis Preservation:* Stasis locks remain invariant without external stimulus.
-- **Parallel Swarm Throughput:** 4,194,304 leaf clones evaluated in **`{p4.get('swarm_elapsed_ms', 0)} ms`** (~331.5M operations/sec).
+- **Parallel Swarm Throughput:** 4,194,304 leaf clones evaluated in **`{p4.get('swarm_elapsed_ms', 0)} ms`** ({p4.get('swarm_rate_str', 'N/A')}).
 
 ### 5. Level L5 Memory Crystals Anti-Rollback (T9 & T10)
 - **T9 Snapshot Rollback:** Restoring a database backup prior to an addition is rejected on read.

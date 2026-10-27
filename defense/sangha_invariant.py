@@ -150,7 +150,7 @@ class InvariantVerifier:
 def run_invariant_benchmark() -> tuple[float, dict]:
     """Benchmark the line-speed invariant verification loop."""
     verifier = InvariantVerifier()
-    repo_root = Path("/home/lucas/SharedWorkspace")
+    repo_root = Path("/home/operator/SharedWorkspace")
     t0 = time.time()
     res = verifier.verify_working_tree(repo_root=repo_root, scope=".", files_to_check=["sangha_mesh.py", "sangha_kekkai.py"])
     elapsed = time.time() - t0

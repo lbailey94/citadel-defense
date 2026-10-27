@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Add SharedWorkspace to sys.path
-WS_ROOT = Path("/home/lucas/SharedWorkspace").resolve()
+WS_ROOT = Path("/home/operator/SharedWorkspace").resolve()
 sys.path.insert(0, str(WS_ROOT))
 
 import sangha_kekkai as sk

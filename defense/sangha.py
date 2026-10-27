@@ -3195,7 +3195,7 @@ def load_peers() -> dict[str, dict]:
         default_peers = {
             "vps-gateway": {
                 "name": "vps-gateway",
-                "url": "http://152.53.195.47:8787",
+                "url": "http://203.0.113.10:8787",
                 "wire_port": 7369,
                 "created": now_iso(),
                 "status": "configured",

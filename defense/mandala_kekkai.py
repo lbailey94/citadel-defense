@@ -346,7 +346,7 @@ def run_kekkai_benchmark():
     # Benchmark 2: Hostile Escape Attempt (Metsu Phase)
     def escape_task(workspace):
         # Attempt to write outside the Kekkai barrier to /home
-        with open("/home/lucas/kekkai_forbidden.txt", "w") as f:
+        with open(os.path.expanduser("~/kekkai_forbidden.txt"), "w") as f:
             f.write("escape attempt")
         return "escaped"
 

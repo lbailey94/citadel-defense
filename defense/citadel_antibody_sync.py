@@ -2,7 +2,7 @@
 """citadel_antibody_sync.py — Live VPS Citadel -> Workstation Antibody Sync Bridge.
 
 Extracts content-free 64-bit antibody digests (FNV-1a / SHA-256 u64) from the production
-VPS Citadel (`152.53.195.47`):
+VPS Citadel (`203.0.113.10`):
   1. Cowrie SSH/Telnet Honeypot (`/opt/cowrie/var/log/cowrie/cowrie.json*`):
      - Session fingerprints (`cowrie.session.connect`)
      - Distinct credential pairs (`cowrie.login.success` / `cowrie.login.failed`)
@@ -56,7 +56,7 @@ for p in sorted(glob.glob("/opt/cowrie/var/log/cowrie/cowrie.json*")):
                 ev = d.get("eventid", "")
                 if d.get("session"):
                     sessions.add(str(d["session"]))
-                if d.get("src_ip") and d["src_ip"] not in ("127.0.0.1", "152.53.195.47"):
+                if d.get("src_ip") and d["src_ip"] not in ("127.0.0.1", "203.0.113.10"):
                     ips.add(str(d["src_ip"]))
                 if ev in ("cowrie.login.success", "cowrie.login.failed"):
                     u = str(d.get("username", ""))
@@ -99,7 +99,7 @@ all_digests = sorted(
 )
 
 print(json.dumps({
-    "source_node": "vps-citadel-152.53.195.47",
+    "source_node": "vps-citadel-203.0.113.10",
     "honeypot_events_scanned": events_total,
     "counts": {
         "sessions": len(digests_by_kind["honeypot_sessions"]),

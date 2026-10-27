@@ -34,7 +34,7 @@ FED_VIEW = STATE_DIR / "violet-federation-view.json"
 KEY_PATH = Path(os.environ.get("VIOLET_KEY_PATH", os.path.expanduser("~/.config/whitemagic/violet/redops.key")))
 
 # Sovereign nodes that must NEVER be blacklisted in `attackers`
-PROTECTED_PUBLIC_IPS = {"152.53.195.47"}
+PROTECTED_PUBLIC_IPS = {"203.0.113.10"}
 
 
 def is_protected_or_nonroutable_ip(ip_str: str) -> bool:
