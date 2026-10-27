@@ -44,9 +44,9 @@ Traditional cybersecurity relies on **passive perimeter walls** where *the defen
                              • Ed25519-signed micro-deltas + 2,048-bit L1 Antibody Bloom Filter (0.76 µs/item).
                              • Touching Node A pre-emptively blackholes the attacker across all peer nodes.
 
-[RING 5: Inner Kekkai]       Mandala Kekkai Landlock LSM & Credential Airlock (defense/mandala_kekkai.py)
-                             • Kernel-enforced filesystem & zero-port TCP jails (Landlock ABI v6/v8).
-                             • OpenCode-class Env Airlock: scrubs ambient API keys & plants HMAC canary traps.
+[RING 5: Inner Kekkai]       Landlock filesystem confinement (`defense/opencode_kekkai_launcher.py`)
+                             • Kernel-enforced workspace filesystem rules; no network rights are installed.
+                             • Child environment is inherited; this launcher does not scrub credentials.
 
 [RING 6: Swarm Distribution] Native Iroh / BLAKE3 Merkle Worktree Swarm (defense/sangha_iroh_swarm.py)
                              • 64KB content-addressed BLAKE3 Merkle pieces with O(1) poison-chunk rejection.
@@ -69,11 +69,11 @@ python3 defense/violet_stress_test.py
 | **Suite 2: eBPF / XDP SPA** | Driver-level pre-socket packet drop (`XDP_DROP`) | **`2,488 – 3,233 ns`** drop latency | `47.19 ms` | **PASS** |
 | **Suite 3: Digital Twin** | AWS IMDS, K8s & Docker Genjutsu Honeypots | `1,584.7 KB` served · **100% canary catch** | `1412.12 ms` | **PASS** |
 | **Suite 4: Iroh Swarm** | P2P BLAKE3 Merkle chunk transfer & poison reject | **100% O(1) poison rejection** · `0 B` Git egress | `545.80 ms` | **PASS** |
-| **Suite 5: Landlock LSM** | Kernel filesystem & zero-port TCP network jail | Blocked out-of-scope write & TCP egress | `658.19 ms` | **PASS** |
+| **Suite 5: Landlock LSM** | Kernel filesystem access rules | Blocked the controlled out-of-scope filesystem probe; network was not tested by this launcher smoke | `658.19 ms` | **PASS** |
 | **Suite 6: Invariants** | Line-speed syntactic & secret-leak replay gate | `9/9` clean passed · `1/1` secret leak caught | `5.24 ms` | **PASS** |
 | **Suite 7: Swarm VCS** | Multi-agent scope reservations & collision halt | Concurrent claims + 0 lock contention | `179.34 ms` | **PASS** |
 | **Suite 8: Genjutsu Asymmetry** | Attacker LLM token burn vs. defender CPU cost | `39,533` tokens (`$0.1977`) vs `$0.000000018` = **`5.2M×–11.0M×`** | `21.00 ms` | **PASS** |
-| **Suite 9: OpenCode Airlock** | Ambient secret scrubbing + canary bait + 0%-refusal triage | **100% real keys scrubbed** · `0.53 ms` triage | `32.56 ms` | **PASS** |
+| **Suite 9: OpenCode fixture** | Synthetic environment canary and local rule-replay fixture | Does not establish launcher environment scrubbing or protection of real credentials | `32.56 ms` | **PASS (fixture only)** |
 | **Suite 10: Halo 3-Flag CTF** | Red Team Swarm (9 waves) vs. Blue Team Citadel | **BLUE 3 — RED 0 (`9/9` Counter-Captures · `UNTOUCHABLE`)** | `129.54 ms` | **PASS** |
 
 ---
@@ -88,7 +88,7 @@ Open [`arena/halo_ctf_visualizer.html`](arena/halo_ctf_visualizer.html) in any b
 
 ## 5. OpenCode v2.1.1 Security Alignment & Drop-In Airlock Plugin
 
-See [`docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md`](docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md) for our complete defensive study of OpenCode `v2.1.1` (`@opencode/cli`) and install the drop-in plugin in [`plugins/opencode-citadel-airlock.js`](plugins/opencode-citadel-airlock.js) to protect `~/.local/share/opencode/auth.json`, `opencode.db`, and ambient environment variables from same-UID tool exfiltration.
+See [`docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md`](docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md) for the OpenCode `v2.1.1` study and implementation notes. The standalone launcher demonstrates filesystem restrictions only; plugin hooks and other credential controls are separate code paths and are not established by its Landlock smoke.
 
 ---
 

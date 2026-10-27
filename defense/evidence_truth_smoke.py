@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""Focused truth-contract smoke tests; all stores and keys live in temp directories."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+_IMPORT_TMP = tempfile.TemporaryDirectory(prefix="violet-truth-import-")
+_ROOT = Path(_IMPORT_TMP.name)
+os.environ["VIOLET_STATE_DIR"] = str(_ROOT / "state")
+os.environ["VIOLET_KEY_PATH"] = str(_ROOT / "keys" / "canary.key")
+os.environ["VIOLET_PQC_KEY_PATH"] = str(_ROOT / "keys" / "pqc.key")
+
+import canary_manager
+from canary_manager import CanaryManager
+from evidence_validation import (
+    BENCHMARK_SCHEMA,
+    PIN_SCHEMA,
+    validate_evidence_manifest,
+)
+from violet_insurability_pack import (
+    generate_insurability_pack,
+    verify_insurability_pack,
+)
+
+
+class EvidenceTruthSmoke(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="violet-truth-case-")
+        self.root = Path(self.temp.name)
+        canary_manager.BLUE_OPS_CHAIN = self.root / "blue-ops.jsonl"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def manager(self, secret=True):
+        key = self.root / "secrets" / "node.key"
+        if secret:
+            key.parent.mkdir(parents=True, exist_ok=True)
+            key.write_text("test-only-secret", encoding="utf-8")
+        return CanaryManager(self.root / "state" / "canaries.json", key)
+
+    def test_canary_requires_mac_or_registered_record(self):
+        cm = self.manager()
+        good = cm.mint_token("smoke", "openai_key", persist=False)
+        self.assertTrue(cm.check_token(good)["is_canary"])
+        self.assertEqual(cm.check_token(good)["authentication"], "cryptographically_verified")
+        fake = "sk-proj-canary-smoke-abcdef012345-" + "0" * 24
+        wrong_mac = cm.check_token(fake)
+        self.assertFalse(wrong_mac["is_canary"])
+        self.assertEqual(wrong_mac["classification"], "format_like_unverified")
+        prefix_only = "sk-proj-canary-this-is-only-a-prefix-looking-value"
+        self.assertEqual(cm.check_token(prefix_only)["classification"], "format_like_unverified")
+        self.assertFalse(cm.check_token("ASIACANARY1234567890")["is_canary"])
+        registered = cm.mint_token("registered", "generic", persist=True)
+        no_secret = CanaryManager(self.root / "state" / "canaries.json", self.root / "missing.key")
+        self.assertEqual(no_secret.check_token(registered)["authentication"], "registered")
+        unseen = self.manager(secret=True).mint_token("unseen", "openai_key", persist=False)
+        self.assertFalse(no_secret.check_token(unseen)["is_canary"])
+        with self.assertRaises(RuntimeError):
+            no_secret.mint_token("forbidden", persist=False)
+        self.assertFalse((self.root / "missing.key").exists())
+
+    def _make_pinned_artifact(self, age_seconds=0):
+        now = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        stamp = now.isoformat()
+        artifact = {"schema": "test.receipt/v1", "generated_at": stamp, "receipts": {"count": 2}}
+        path = self.root / "receipt.json"
+        raw = json.dumps(artifact, sort_keys=True).encode()
+        path.write_bytes(raw)
+        manifest = {
+            "schema": PIN_SCHEMA, "generated_at": datetime.now(timezone.utc).isoformat(),
+            "max_age_seconds": 3600,
+            "artifacts": {"receipt": {"path": path.name, "sha256": hashlib.sha256(raw).hexdigest(),
+                                       "schema": "test.receipt/v1", "generated_at": stamp,
+                                       "max_age_seconds": 60, "counts": {"receipts.count": 2}}},
+        }
+        pin_path = self.root / "pins.json"
+        pin_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path, pin_path
+
+    def _make_benchmark(self, age_seconds=0, passed=1, all_passed=False, outcomes=(True, False)):
+        now = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        stamp = now.isoformat()
+        benchmark = {
+            "schema": BENCHMARK_SCHEMA,
+            "generated_at": stamp,
+            "results": [{"name": "case-a", "passed": outcomes[0]}, {"name": "case-b", "passed": outcomes[1]}],
+            "total": 2,
+            "passed": passed,
+            "all_passed": all_passed,
+        }
+        path = self.root / "benchmark.json"
+        raw = json.dumps(benchmark, sort_keys=True).encode()
+        path.write_bytes(raw)
+        manifest = {
+            "schema": PIN_SCHEMA,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "max_age_seconds": 3600,
+            "artifacts": {
+                "benchmark": {
+                    "path": path.name,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "schema": BENCHMARK_SCHEMA,
+                    "generated_at": stamp,
+                    "max_age_seconds": 60,
+                    "counts": {"total": 2, "passed": passed},
+                }
+            },
+        }
+        pin_path = self.root / "benchmark-pins.json"
+        pin_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path, pin_path
+
+    def test_evidence_requires_explicit_fresh_matching_pins(self):
+        self.assertEqual(validate_evidence_manifest(None)["status"], "UNAVAILABLE")
+        artifact, pins = self._make_pinned_artifact()
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        artifact.write_text('{"schema":', encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+        artifact, pins = self._make_pinned_artifact(age_seconds=120)
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+        artifact, pins = self._make_pinned_artifact()
+        artifact.unlink()
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+        artifact, pins = self._make_pinned_artifact()
+        artifact.write_text(artifact.read_text(encoding="utf-8").replace('"count": 2', '"count": 3'), encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+        _, missing_pins = self._make_pinned_artifact()
+        missing_pins.unlink()
+        self.assertEqual(validate_evidence_manifest(missing_pins)["status"], "INVALID")
+
+    def test_evidence_rejects_duplicate_nonfinite_and_untyped_counts(self):
+        _, pins = self._make_pinned_artifact()
+        pins.write_text('{"schema":"violet.evidence-validation/v1","schema":"violet.evidence-validation/v1"}', encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID")
+
+        artifact, pins = self._make_pinned_artifact()
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["max_age_seconds"] = float("nan")
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        for max_age in (True, -1):
+            _, pins = self._make_pinned_artifact()
+            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            manifest["max_age_seconds"] = max_age
+            pins.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        for max_age in (True, -1):
+            _, pins = self._make_pinned_artifact()
+            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            manifest["artifacts"]["receipt"]["max_age_seconds"] = max_age
+            pins.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            _, pins = self._make_pinned_artifact()
+            raw = pins.read_text(encoding="utf-8").replace('"max_age_seconds": 3600', f'"max_age_seconds": {constant}')
+            pins.write_text(raw, encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        artifact, pins = self._make_pinned_artifact()
+        artifact.write_text('{"schema":"test.receipt/v1","schema":"test.receipt/v1"}', encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        artifact, pins = self._make_pinned_artifact()
+        receipt = json.loads(artifact.read_text(encoding="utf-8"))
+        artifact.write_text(json.dumps(receipt).replace('"count": 2', '"count": NaN'), encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        for pin_count in (None, True, 2.0, -1):
+            artifact, pins = self._make_pinned_artifact()
+            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            manifest["artifacts"]["receipt"]["counts"]["receipts.count"] = pin_count
+            pins.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+        _, pins = self._make_pinned_artifact()
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["counts"] = {}
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
+
+        artifact, pins = self._make_pinned_artifact()
+        raw = artifact.read_text(encoding="utf-8").replace('"count": 2', '"count": true')
+        artifact.write_text(raw, encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+
+        artifact, pins = self._make_pinned_artifact()
+        receipt = json.loads(artifact.read_text(encoding="utf-8"))
+        del receipt["receipts"]["count"]
+        artifact.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+
+        artifact, pins = self._make_pinned_artifact()
+        receipt = json.loads(artifact.read_text(encoding="utf-8"))
+        receipt["receipts"]["count"] = None
+        artifact.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+        manifest = json.loads(pins.read_text(encoding="utf-8"))
+        manifest["artifacts"]["receipt"]["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        pins.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(validate_evidence_manifest(pins)["status"], "INVALID_OR_UNAVAILABLE")
+
+    def test_pack_signs_integrity_but_never_claims_live_compliance(self):
+        _, pins = self._make_benchmark()
+        out = self.root / "pack"
+        result = generate_insurability_pack("smoke", out, pins)
+        path = Path(result["manifest_json"])
+        self.assertFalse((out / ".operator-keys").exists())
+        self.assertTrue((_ROOT / "state" / "keys" / "redops.key").exists())
+        self.assertTrue(verify_insurability_pack(path))
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(bundle["self_verified_integrity_only"])
+        self.assertFalse(bundle["trusted_external_peer"])
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "RECORDED_LOCAL_RESULTS")
+        self.assertEqual(bundle["pack"]["benchmark"]["total"], 2)
+        self.assertEqual(bundle["pack"]["benchmark"]["passed"], 1)
+        self.assertFalse(bundle["pack"]["benchmark"]["all_passed"])
+        self.assertEqual(bundle["pack"]["compliance_status"], "NOT_ASSESSED")
+        report = Path(result["report_md"]).read_text(encoding="utf-8")
+        self.assertNotIn("**LIVE**", report)
+        self.assertNotIn("8/8", report)
+        bundle["pack"]["benchmark"]["status"] = "PASS"
+        path.write_text(json.dumps(bundle), encoding="utf-8")
+        self.assertFalse(verify_insurability_pack(path))
+
+        result = generate_insurability_pack("duplicate", self.root / "duplicate-pack", pins)
+        path = Path(result["manifest_json"])
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8").rstrip()
+        raw = raw[:-1] + ',"canonical_sha256":' + json.dumps(bundle["canonical_sha256"]) + "}"
+        path.write_text(raw, encoding="utf-8")
+        self.assertFalse(verify_insurability_pack(path))
+
+    def test_benchmark_missing_stale_tampered_and_inconsistent_stay_nonpassing(self):
+        out = self.root / "missing-benchmark-pack"
+        result = generate_insurability_pack("missing", out)
+        bundle = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "UNAVAILABLE")
+        self.assertNotIn("all_passed", bundle["pack"]["benchmark"])
+
+        artifact, pins = self._make_benchmark(passed=2, all_passed=True, outcomes=(True, True))
+        result = generate_insurability_pack("all-pass", self.root / "all-pass-pack", pins)
+        bundle = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "RECORDED_LOCAL_RESULTS")
+        self.assertEqual(bundle["pack"]["benchmark"]["passed"], 2)
+        self.assertTrue(bundle["pack"]["benchmark"]["all_passed"])
+
+        artifact, pins = self._make_benchmark(age_seconds=120)
+        result = generate_insurability_pack("stale", self.root / "stale-pack", pins)
+        bundle = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "INVALID_OR_UNAVAILABLE")
+
+        artifact, pins = self._make_benchmark()
+        artifact.write_text(artifact.read_text(encoding="utf-8").replace('"passed": 1', '"passed": 2'), encoding="utf-8")
+        result = generate_insurability_pack("tampered", self.root / "tampered-pack", pins)
+        bundle = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "INVALID_OR_UNAVAILABLE")
+
+        artifact, pins = self._make_benchmark(passed=1, all_passed=True, outcomes=(True, False))
+        result = generate_insurability_pack("inconsistent", self.root / "inconsistent-pack", pins)
+        bundle = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(bundle["pack"]["benchmark"]["status"], "INVALID_OR_UNAVAILABLE")
+        report = Path(result["report_md"]).read_text(encoding="utf-8")
+        self.assertNotIn("**LIVE**", report)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

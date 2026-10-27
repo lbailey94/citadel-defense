@@ -1,53 +1,40 @@
 #!/usr/bin/env python3
-"""opencode_kekkai_launcher.py — Tri-Platform Kernel Confinement Launcher for OpenCode v2.
+"""Fail-closed filesystem confinement for OpenCode child commands.
 
-Provides zero-container, OS-native process confinement across Linux, macOS, and Windows
-(`x86_64` and `arm64` / `aarch64`):
-
-  1. Linux (`x86_64`, `aarch64` / `arm64`, WSL2 — Kernel 5.13+ to 7.0+):
-     - Enforces Linux Kernel Landlock LSM (`SYS_landlock_create_ruleset = 444`,
-       `SYS_landlock_add_rule = 445`, `SYS_landlock_restrict_self = 446` — unified
-       `asm-generic` syscall numbers across x86_64 and arm64).
-     - Allows Read/Write inside `--workspace`, `/tmp`, and `/dev`; Read/Execute on
-       toolchains; omits `~/.local/share/opencode`, `~/.config/opencode`, `~/.ssh`,
-       `~/.aws`, and `~/.gnupg` (kernel `EACCES` on same-UID access).
-
-  2. macOS (`darwin-arm64` Apple Silicon & `darwin-x64` Intel):
-     - Compiles an Apple XNU Mandatory Access Control (`Seatbelt` SBPL) profile and
-       executes via `/usr/bin/sandbox-exec -p <profile>`.
-     - Kernel-blocks `file-read*` and `file-write*` on `~/.local/share/opencode`,
-       `~/Library/Application Support/opencode`, `~/.config/opencode`, `~/.ssh`,
-       `~/.aws`, and `~/.gnupg`.
-     - Kernel-blocks `/usr/bin/security` execution to prevent macOS Keychain dumps.
-     - Restricts `file-write*` under `$HOME` strictly to `--workspace`.
-
-  3. Windows (`win32-x64` & `win32-arm64` Native):
-     - Binds the child tree to a Windows Kernel Job Object (`CreateJobObjectW` +
-       `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) with UI/Clipboard isolation
-       (`JOB_OBJECT_UILIMIT_READCLIPBOARD | JOB_OBJECT_UILIMIT_WRITECLIPBOARD`) so
-       confined tools cannot harvest clipboard secrets or spawn orphan background daemons,
-       and drops elevated privileges via `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`.
+Linux uses Landlock and records the ABI plus the filesystem rules actually
+installed. Landlock network rights are deliberately not handled here: this
+launcher confines filesystem access only and does not claim zero network egress.
+macOS retains its Seatbelt profile. Windows and unknown platforms refuse to run
+until a real, tested confinement backend is available.
 
 Usage:
-  python3 opencode_kekkai_launcher.py --workspace /path/to/project -- bash -c "command"
+  python3 opencode_kekkai_launcher.py --workspace /path/to/project -- command args...
   python3 opencode_kekkai_launcher.py --workspace /path/to/project --print-darwin-profile
+
+This launcher constrains filesystem access only. Child commands inherit the
+launcher environment unchanged except for temporary-directory variables, and
+network access is unrestricted. It does not provide an environment credential
+airlock or network egress control.
 """
 
 from __future__ import annotations
 
 import argparse
 import ctypes
+import errno
+import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PR_SET_NO_NEW_PRIVS = 38
 LANDLOCK_RULE_PATH_BENEATH = 1
+LANDLOCK_CREATE_RULESET_VERSION = 1
 
-# Unified asm-generic syscall numbers (identical on Linux x86_64, aarch64/arm64, riscv64)
+# asm-generic syscall numbers used by supported Linux x86_64 and arm64 kernels.
 SYS_LANDLOCK_CREATE_RULESET = 444
 SYS_LANDLOCK_ADD_RULE = 445
 SYS_LANDLOCK_RESTRICT_SELF = 446
@@ -65,11 +52,15 @@ ACCESS_FS_MAKE_SOCK = 1 << 9
 ACCESS_FS_MAKE_FIFO = 1 << 10
 ACCESS_FS_MAKE_BLOCK = 1 << 11
 ACCESS_FS_MAKE_SYM = 1 << 12
+ACCESS_FS_REFER = 1 << 13       # Landlock ABI 2
+ACCESS_FS_TRUNCATE = 1 << 14    # Landlock ABI 3
+ACCESS_FS_IOCTL_DEV = 1 << 15   # Landlock ABI 5
 
-ALLOW_RO = ACCESS_FS_EXECUTE | ACCESS_FS_READ_FILE | ACCESS_FS_READ_DIR
-ALLOW_RW = (
-    ALLOW_RO
+_BASE_FS = (
+    ACCESS_FS_EXECUTE
     | ACCESS_FS_WRITE_FILE
+    | ACCESS_FS_READ_FILE
+    | ACCESS_FS_READ_DIR
     | ACCESS_FS_REMOVE_DIR
     | ACCESS_FS_REMOVE_FILE
     | ACCESS_FS_MAKE_CHAR
@@ -80,11 +71,46 @@ ALLOW_RW = (
     | ACCESS_FS_MAKE_BLOCK
     | ACCESS_FS_MAKE_SYM
 )
+_READ_ONLY = ACCESS_FS_EXECUTE | ACCESS_FS_READ_FILE | ACCESS_FS_READ_DIR
+_READ_WRITE = (
+    _READ_ONLY
+    | ACCESS_FS_WRITE_FILE
+    | ACCESS_FS_REMOVE_DIR
+    | ACCESS_FS_REMOVE_FILE
+    | ACCESS_FS_MAKE_DIR
+    | ACCESS_FS_MAKE_REG
+    | ACCESS_FS_MAKE_SOCK
+    | ACCESS_FS_MAKE_FIFO
+    | ACCESS_FS_MAKE_SYM
+    | ACCESS_FS_REFER
+    | ACCESS_FS_TRUNCATE
+    | ACCESS_FS_IOCTL_DEV
+)
+
+_ACCESS_NAMES = (
+    (ACCESS_FS_EXECUTE, "execute"),
+    (ACCESS_FS_WRITE_FILE, "write_file"),
+    (ACCESS_FS_READ_FILE, "read_file"),
+    (ACCESS_FS_READ_DIR, "read_dir"),
+    (ACCESS_FS_REMOVE_DIR, "remove_dir"),
+    (ACCESS_FS_REMOVE_FILE, "remove_file"),
+    (ACCESS_FS_MAKE_CHAR, "make_char"),
+    (ACCESS_FS_MAKE_DIR, "make_dir"),
+    (ACCESS_FS_MAKE_REG, "make_reg"),
+    (ACCESS_FS_MAKE_SOCK, "make_sock"),
+    (ACCESS_FS_MAKE_FIFO, "make_fifo"),
+    (ACCESS_FS_MAKE_BLOCK, "make_block"),
+    (ACCESS_FS_MAKE_SYM, "make_sym"),
+    (ACCESS_FS_REFER, "refer"),
+    (ACCESS_FS_TRUNCATE, "truncate"),
+    (ACCESS_FS_IOCTL_DEV, "ioctl_dev"),
+)
 
 
 class LandlockRulesetAttr(ctypes.Structure):
     _fields_ = [
         ("handled_access_fs", ctypes.c_uint64),
+        # Kept zero: this implementation intentionally does not install network rules.
         ("handled_access_net", ctypes.c_uint64),
     ]
 
@@ -96,95 +122,191 @@ class LandlockPathBeneathAttr(ctypes.Structure):
     ]
 
 
-def _add_linux_path_rule(libc, ruleset_fd: int, path_str: str, access: int) -> None:
-    p = Path(path_str)
-    if not p.exists():
-        return
+def _os_error(operation: str) -> OSError:
+    code = ctypes.get_errno() or errno.EIO
+    return OSError(code, f"{operation}: {os.strerror(code)}")
+
+
+def _check_syscall(result: int, operation: str) -> int:
+    if result < 0:
+        raise _os_error(operation)
+    return int(result)
+
+
+def _access_names(mask: int) -> list[str]:
+    return [name for bit, name in _ACCESS_NAMES if mask & bit]
+
+
+def _resolve_workspace(workspace: str) -> Path:
+    resolved = Path(workspace).resolve(strict=True)
+    if not resolved.is_dir():
+        raise ValueError(f"workspace is not a directory: {resolved}")
+    home = Path.home().resolve(strict=True)
+    if resolved == Path("/") or resolved == home or resolved in home.parents:
+        raise ValueError(
+            f"workspace {resolved} contains the current user's home {home}; refusing broad confinement scope"
+        )
+    return resolved
+
+
+def _supported_fs_access(abi: int) -> int:
+    supported = _BASE_FS
+    if abi >= 2:
+        supported |= ACCESS_FS_REFER
+    if abi >= 3:
+        supported |= ACCESS_FS_TRUNCATE
+    if abi >= 5:
+        supported |= ACCESS_FS_IOCTL_DEV
+    return supported
+
+
+def _home_toolchain_paths(home: Path) -> list[str]:
+    """Return narrow read-only tool roots; never grant home Git config or credentials."""
+    return [
+        str(home / ".cargo/bin"),
+        str(home / ".cargo/registry/cache"),
+        str(home / ".cargo/registry/index"),
+        str(home / ".cargo/registry/src"),
+        str(home / ".rustup/toolchains"),
+        str(home / ".rustup/settings.toml"),
+        str(home / ".nvm/versions"),
+    ]
+
+
+def _add_linux_path_rule(
+    libc,
+    ruleset_fd: int,
+    path_str: str,
+    access: int,
+    handled_access_fs: int,
+) -> dict[str, object] | None:
+    path = Path(path_str)
+    if not path.exists():
+        return None
+    resolved = path.resolve(strict=True)
+    granted = access & handled_access_fs
+    if not resolved.is_dir():
+        # File rules need no directory or execute right. No rule grants a
+        # standalone executable file; executables are reached through toolchain dirs.
+        granted &= ACCESS_FS_READ_FILE | ACCESS_FS_WRITE_FILE | ACCESS_FS_TRUNCATE | ACCESS_FS_IOCTL_DEV
     try:
-        resolved = p.resolve()
-        # Linux Landlock LSM invariant: non-directory FDs only accept file-level access bits
-        # (READ_FILE, WRITE_FILE, EXECUTE); passing READ_DIR/MAKE_* on a regular file returns EINVAL.
-        if not resolved.is_dir():
-            access &= ACCESS_FS_EXECUTE | ACCESS_FS_READ_FILE | ACCESS_FS_WRITE_FILE
         fd = os.open(str(resolved), os.O_PATH | os.O_CLOEXEC)
-    except OSError:
-        return
+    except OSError as exc:
+        raise OSError(exc.errno, f"open Landlock rule path {resolved}: {exc.strerror}") from exc
     try:
         attr = LandlockPathBeneathAttr()
-        attr.allowed_access = access
+        attr.allowed_access = granted
         attr.parent_fd = fd
-        libc.syscall(
+        ctypes.set_errno(0)
+        result = libc.syscall(
             SYS_LANDLOCK_ADD_RULE,
             ruleset_fd,
             LANDLOCK_RULE_PATH_BENEATH,
             ctypes.byref(attr),
             0,
         )
+        _check_syscall(result, f"Landlock add_rule for {resolved}")
     finally:
         os.close(fd)
+    return {
+        "path": str(resolved),
+        "access_mask": granted,
+        "access": _access_names(granted),
+    }
 
 
-def apply_linux_landlock(workspace: str) -> None:
+def apply_linux_landlock(workspace: str, private_tmp: str) -> dict[str, object]:
+    """Install Landlock on the calling process or raise before any child can run."""
+    workspace_path = _resolve_workspace(workspace)
+    private_tmp_path = Path(private_tmp).resolve(strict=True)
+    if not private_tmp_path.is_dir():
+        raise ValueError(f"private temporary path is not a directory: {private_tmp_path}")
+
     libc = ctypes.CDLL(None, use_errno=True)
-    attr = LandlockRulesetAttr()
-    attr.handled_access_fs = ALLOW_RW
-    attr.handled_access_net = 0
-
-    ruleset_fd = libc.syscall(
-        SYS_LANDLOCK_CREATE_RULESET, ctypes.byref(attr), ctypes.sizeof(attr), 0
+    libc.syscall.restype = ctypes.c_long
+    ctypes.set_errno(0)
+    abi = _check_syscall(
+        libc.syscall(SYS_LANDLOCK_CREATE_RULESET, None, 0, LANDLOCK_CREATE_RULESET_VERSION),
+        "query Landlock ABI",
     )
-    if ruleset_fd < 0:
-        return
+    if abi < 1:
+        raise OSError(errno.EOPNOTSUPP, f"unsupported Landlock ABI {abi}")
 
-    home = Path.home()
-    ro_paths = [
-        "/usr",
-        "/lib",
-        "/lib64",
-        "/bin",
-        "/sbin",
-        "/etc",
-        "/proc",
-        "/sys",
-        "/run",
-        "/var",
-        str(home / ".gitconfig"),
-        str(home / ".config/git"),
-        str(home / ".nvm"),
-        str(home / ".cargo"),
-        str(home / ".rustup"),
-        str(home / ".local/bin"),
-    ]
-    rw_paths = [
-        "/tmp",
-        "/dev",
-        str(Path(workspace).resolve()),
-    ]
+    handled_access_fs = _supported_fs_access(abi)
+    attr = LandlockRulesetAttr()
+    attr.handled_access_fs = handled_access_fs
+    attr.handled_access_net = 0
+    ctypes.set_errno(0)
+    ruleset_fd = _check_syscall(
+        libc.syscall(SYS_LANDLOCK_CREATE_RULESET, ctypes.byref(attr), ctypes.sizeof(attr), 0),
+        "create Landlock ruleset",
+    )
 
-    for rp in ro_paths:
-        _add_linux_path_rule(libc, ruleset_fd, rp, ALLOW_RO)
-    for wp in rw_paths:
-        _add_linux_path_rule(libc, ruleset_fd, wp, ALLOW_RW)
+    rules: list[dict[str, object]] = []
+    try:
+        home = Path.home()
+        read_only_paths = [
+            "/usr", "/lib", "/lib64", "/bin", "/sbin",
+            # Runtime identity, DNS, TLS and loader data; avoid broad /run and /var grants.
+            "/etc/ld.so.cache", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
+            "/etc/hosts", "/etc/resolv.conf", "/etc/gai.conf", "/etc/localtime",
+            "/etc/ssl/certs", "/etc/ssl/openssl.cnf",
+            *_home_toolchain_paths(home),
+            "/dev/urandom", "/dev/random",
+        ]
+        read_write_paths = [
+            str(workspace_path), str(private_tmp_path), "/dev/null",
+        ]
+        for path in read_only_paths:
+            rule = _add_linux_path_rule(libc, ruleset_fd, path, _READ_ONLY, handled_access_fs)
+            if rule is not None:
+                rule["mode"] = "read_only"
+                rules.append(rule)
+        for path in read_write_paths:
+            rule = _add_linux_path_rule(libc, ruleset_fd, path, _READ_WRITE, handled_access_fs)
+            if rule is None:
+                raise FileNotFoundError(f"required Landlock write path is missing: {path}")
+            rule["mode"] = "read_write"
+            rules.append(rule)
 
-    libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
-    libc.syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0)
-    os.close(ruleset_fd)
+        ctypes.set_errno(0)
+        if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            raise _os_error("prctl(PR_SET_NO_NEW_PRIVS)")
+        ctypes.set_errno(0)
+        _check_syscall(
+            libc.syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0),
+            "Landlock restrict_self",
+        )
+    finally:
+        os.close(ruleset_fd)
+
+    return {
+        "backend": "Landlock",
+        "abi": abi,
+        "enforced": "filesystem access rights listed below",
+        "handled_access_fs_mask": handled_access_fs,
+        "handled_access_fs": _access_names(handled_access_fs),
+        "handled_access_net_mask": 0,
+        "network": "unrestricted by this launcher; no network confinement is installed",
+        "environment": "inherited from launcher; no credential variables are scrubbed",
+        "rules": rules,
+    }
 
 
 def build_darwin_seatbelt_profile(workspace: str, home_dir: str | None = None) -> str:
-    """Compile a macOS XNU Seatbelt (SBPL) profile for /usr/bin/sandbox-exec."""
+    """Build a macOS Seatbelt profile for /usr/bin/sandbox-exec."""
     home = str(Path(home_dir).resolve()) if home_dir else str(Path.home().resolve())
-    ws = str(Path(workspace).resolve())
+    ws = str(_resolve_workspace(workspace))
 
-    def sbpl_escape(s: str) -> str:
-        return s.replace("\\", "\\\\").replace('"', '\\"')
+    def sbpl_escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"')
 
     h = sbpl_escape(home)
     w = sbpl_escape(ws)
     return f"""(version 1)
 (allow default)
 
-;; 1. Kernel-block same-UID read/write to OpenCode credential stores & SSH/AWS/GPG keys
+;; Block reads and writes to OpenCode credentials and common user keys.
 (deny file-read* file-write*
   (subpath "{h}/.local/share/opencode")
   (subpath "{h}/.config/opencode")
@@ -196,47 +318,55 @@ def build_darwin_seatbelt_profile(workspace: str, home_dir: str | None = None) -
   (subpath "{h}/.config/gh")
   (subpath "{h}/.config/whitemagic"))
 
-;; 2. Kernel-block macOS Keychain dump utility (/usr/bin/security) inside agent tool shells
 (deny process-exec
   (literal "/usr/bin/security"))
 
-;; 3. Restrict file writes under $HOME strictly to the active project workspace
 (deny file-write*
   (subpath "{h}"))
 (allow file-write*
   (subpath "{w}")
-  (subpath "/tmp")
-  (subpath "/private/tmp")
-  (subpath "/private/var/folders")
   (subpath "/dev"))
 """
 
 
 def exec_darwin_seatbelt(workspace: str, cmd: list[str]) -> int:
+    workspace_path = _resolve_workspace(workspace)
     profile = build_darwin_seatbelt_profile(workspace)
     sandbox_bin = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
-    if os.path.exists(sandbox_bin):
-        os.execv(sandbox_bin, [sandbox_bin, "-p", profile, "--", *cmd])
-    os.execvp(cmd[0], cmd)
-    return 1
-
-
-def exec_windows_confined(workspace: str, cmd: list[str]) -> int:
-    """Execute command on Windows inside a Job Object with clipboard isolation & kill-on-close."""
+    if not os.path.isfile(sandbox_bin) or not os.access(sandbox_bin, os.X_OK):
+        raise RuntimeError("macOS sandbox-exec is unavailable; refusing unconfined execution")
+    private_tmp = tempfile.mkdtemp(prefix=".opencode-kekkai-tmp-", dir=str(workspace_path))
+    child_env = os.environ.copy()
+    child_env["TMPDIR"] = private_tmp
+    child_env["TMP"] = private_tmp
+    child_env["TEMP"] = private_tmp
     try:
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-        job = kernel32.CreateJobObjectW(None, None)
-        if job:
-            # Apply UI restrictions: prevent child process from reading/writing Windows Clipboard
-            # (JOB_OBJECT_UILIMIT_READCLIPBOARD = 0x02, JOB_OBJECT_UILIMIT_WRITECLIPBOARD = 0x04)
-            ui_restrict = ctypes.c_uint32(0x02 | 0x04)
-            kernel32.SetInformationJobObject(job, 4, ctypes.byref(ui_restrict), ctypes.sizeof(ui_restrict))
-            kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess())
-    except Exception:
-        pass
-    proc = subprocess.run(cmd, cwd=workspace)
-    return int(proc.returncode)
+        return int(subprocess.run(
+            [sandbox_bin, "-p", profile, "--", *cmd],
+            cwd=str(workspace_path),
+            env=child_env,
+            check=False,
+        ).returncode)
+    finally:
+        shutil.rmtree(private_tmp)
+
+
+def exec_linux_confined(workspace: str, cmd: list[str]) -> int:
+    workspace_path = _resolve_workspace(workspace)
+    # A unique 0700 temp root inside the already-authorized workspace avoids
+    # granting writes to shared /tmp just so the launcher can clean up afterward.
+    private_tmp = tempfile.mkdtemp(prefix=".opencode-kekkai-tmp-", dir=str(workspace_path))
+    try:
+        policy = apply_linux_landlock(str(workspace_path), private_tmp)
+        print("KEKKAI_POLICY " + json.dumps(policy, sort_keys=True), file=sys.stderr, flush=True)
+        child_env = os.environ.copy()
+        child_env["TMPDIR"] = private_tmp
+        child_env["TMP"] = private_tmp
+        child_env["TEMP"] = private_tmp
+        return int(subprocess.run(cmd, cwd=str(workspace_path), env=child_env, check=False).returncode)
+    finally:
+        # The private directory itself is explicitly writable by the restricted process.
+        shutil.rmtree(private_tmp)
 
 
 def main() -> int:
@@ -245,29 +375,32 @@ def main() -> int:
     ap.add_argument("--print-darwin-profile", action="store_true")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     args = ap.parse_args()
-
     if args.print_darwin_profile:
-        print(build_darwin_seatbelt_profile(args.workspace), end="")
-        return 0
+        try:
+            print(build_darwin_seatbelt_profile(args.workspace), end="")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"opencode_kekkai_launcher: confinement failed: {exc}", file=sys.stderr)
+            return 126
 
     cmd = list(args.cmd)
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
     if not cmd:
-        return 0
+        ap.error("a command is required unless --print-darwin-profile is used")
 
-    sys_plat = sys.platform
-    if sys_plat.startswith("linux"):
-        apply_linux_landlock(args.workspace)
-        os.execvp(cmd[0], cmd)
-        return 1
-    elif sys_plat == "darwin":
-        return exec_darwin_seatbelt(args.workspace, cmd)
-    elif sys_plat in ("win32", "cygwin"):
-        return exec_windows_confined(args.workspace, cmd)
-    else:
-        os.execvp(cmd[0], cmd)
-        return 1
+    try:
+        sys_plat = sys.platform
+        if sys_plat.startswith("linux"):
+            return exec_linux_confined(args.workspace, cmd)
+        if sys_plat == "darwin":
+            return exec_darwin_seatbelt(args.workspace, cmd)
+        if sys_plat in ("win32", "cygwin"):
+            raise RuntimeError("no supported Windows confinement backend; refusing unconfined execution")
+        raise RuntimeError(f"no supported confinement backend for platform {sys_plat!r}; refusing unconfined execution")
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"opencode_kekkai_launcher: confinement failed: {exc}", file=sys.stderr)
+        return 126
 
 
 if __name__ == "__main__":
