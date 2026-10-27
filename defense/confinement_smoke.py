@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -155,6 +156,97 @@ class LauncherSetupTests(unittest.TestCase):
 
 
 class HostLandlockTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux Landlock")
+    def test_fake_home_credentials_are_unreadable_with_narrow_toolchain_access(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="kekkai-fake-home-") as fake_home,
+            tempfile.TemporaryDirectory(prefix="kekkai-smoke-workspace-") as workspace,
+        ):
+            home = Path(fake_home)
+            workspace_path = Path(workspace)
+            credentials = [
+                home / ".gitconfig",
+                home / ".git-credentials",
+                home / ".config/git/credentials",
+                home / ".cargo/credentials.toml",
+            ]
+            for path in credentials:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("FAKE_FIXTURE_CREDENTIAL_ONLY", encoding="utf-8")
+
+            toolchain_sentinels = [
+                home / ".cargo/bin/fixture-tool",
+                home / ".cargo/registry/cache/fixture.crate",
+                home / ".cargo/registry/index/fixture-index/config.json",
+                home / ".cargo/registry/src/fixture.crate/src/lib.rs",
+                home / ".rustup/toolchains/fixture/bin/rustc",
+                home / ".rustup/settings.toml",
+                home / ".nvm/versions/node/v0-fixture/bin/node",
+            ]
+            for path in toolchain_sentinels:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture toolchain sentinel", encoding="utf-8")
+
+            workspace_sentinel = workspace_path / "workspace-readable.txt"
+            workspace_sentinel.write_text("workspace fixture", encoding="utf-8")
+            probe = """import os, pathlib, subprocess, sys
+home, workspace = map(pathlib.Path, sys.argv[1:3])
+credential_paths = [pathlib.Path(p) for p in sys.argv[3:7]]
+toolchain_paths = [pathlib.Path(p) for p in sys.argv[7:]]
+assert (workspace / 'workspace-readable.txt').read_text() == 'workspace fixture'
+for path in credential_paths:
+    try:
+        path.read_text()
+    except PermissionError:
+        pass
+    else:
+        raise SystemExit(f'fake credential remained readable: {path.relative_to(home)}')
+for path in toolchain_paths:
+    assert path.read_text() == 'fixture toolchain sentinel', path
+assert os.environ.get('CITADEL_FAKE_ENV_SENTINEL') == 'fixture-only'
+child = subprocess.run(['/usr/bin/python3', '-c', 'print("nested-python-ok")'],
+                       capture_output=True, text=True, check=False)
+assert child.returncode == 0 and child.stdout.strip() == 'nested-python-ok', child.stderr
+print('fake-home filesystem boundary: PASS')
+"""
+            env = dict(os.environ)
+            env["HOME"] = str(home)
+            env["CITADEL_FAKE_ENV_SENTINEL"] = "fixture-only"
+            actual = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "opencode_kekkai_launcher.py"),
+                    "--workspace",
+                    workspace,
+                    "--",
+                    "/usr/bin/python3",
+                    "-c",
+                    probe,
+                    str(home),
+                    str(workspace_path),
+                    *(str(path) for path in credentials),
+                    *(str(path) for path in toolchain_sentinels),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(actual.returncode, 0, actual.stderr + actual.stdout)
+            self.assertIn("fake-home filesystem boundary: PASS", actual.stdout)
+            policy_line = next(
+                line for line in actual.stderr.splitlines()
+                if line.startswith("KEKKAI_POLICY ")
+            )
+            policy = json.loads(policy_line.removeprefix("KEKKAI_POLICY "))
+            paths = {rule["path"] for rule in policy["rules"]}
+            self.assertIn(str(home / ".cargo/bin"), paths)
+            self.assertNotIn(str(home / ".cargo"), paths)
+            self.assertNotIn(str(home / ".gitconfig"), paths)
+            self.assertNotIn(str(home / ".config/git"), paths)
+            self.assertIn("unrestricted", policy["network"])
+            self.assertIn("inherited", policy["environment"])
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux Landlock")
     def test_external_read_is_denied_workspace_read_is_allowed(self) -> None:
         with (

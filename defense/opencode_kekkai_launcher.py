@@ -10,6 +10,11 @@ until a real, tested confinement backend is available.
 Usage:
   python3 opencode_kekkai_launcher.py --workspace /path/to/project -- command args...
   python3 opencode_kekkai_launcher.py --workspace /path/to/project --print-darwin-profile
+
+This launcher constrains filesystem access only. Child commands inherit the
+launcher environment unchanged except for temporary-directory variables, and
+network access is unrestricted. It does not provide an environment credential
+airlock or network egress control.
 """
 
 from __future__ import annotations
@@ -155,6 +160,19 @@ def _supported_fs_access(abi: int) -> int:
     return supported
 
 
+def _home_toolchain_paths(home: Path) -> list[str]:
+    """Return narrow read-only tool roots; never grant home Git config or credentials."""
+    return [
+        str(home / ".cargo/bin"),
+        str(home / ".cargo/registry/cache"),
+        str(home / ".cargo/registry/index"),
+        str(home / ".cargo/registry/src"),
+        str(home / ".rustup/toolchains"),
+        str(home / ".rustup/settings.toml"),
+        str(home / ".nvm/versions"),
+    ]
+
+
 def _add_linux_path_rule(
     libc,
     ruleset_fd: int,
@@ -233,9 +251,7 @@ def apply_linux_landlock(workspace: str, private_tmp: str) -> dict[str, object]:
             "/etc/ld.so.cache", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
             "/etc/hosts", "/etc/resolv.conf", "/etc/gai.conf", "/etc/localtime",
             "/etc/ssl/certs", "/etc/ssl/openssl.cnf",
-            str(home / ".gitconfig"), str(home / ".config/git"),
-            str(home / ".nvm"), str(home / ".cargo"), str(home / ".rustup"),
-            str(home / ".local/bin"),
+            *_home_toolchain_paths(home),
             "/dev/urandom", "/dev/random",
         ]
         read_write_paths = [
@@ -272,6 +288,7 @@ def apply_linux_landlock(workspace: str, private_tmp: str) -> dict[str, object]:
         "handled_access_fs": _access_names(handled_access_fs),
         "handled_access_net_mask": 0,
         "network": "unrestricted by this launcher; no network confinement is installed",
+        "environment": "inherited from launcher; no credential variables are scrubbed",
         "rules": rules,
     }
 
