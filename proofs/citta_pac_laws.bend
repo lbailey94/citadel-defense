@@ -1,7 +1,11 @@
 import Base
 
-# Law 1: Bitset Write-Set Union Idempotence
-# Proves that merging an already-claimed Gana-Hexagram scope bit with itself is idempotent.
+# Algebraic lemmas over Bool and Nat. Domain-themed identifiers are historical.
+# These terms do not model runtime permissions, agent execution, persistent
+# storage, cryptography, or an attacker. Connecting these lemmas to an
+# implementation requires a separate specification and refinement argument.
+
+# Law 1: Boolean OR idempotence (one bit, not a 2,048-bit implementation).
 law bitset_union_idem:
   for a: Bool
   {Bool.or(a, a) == a : Bool}
@@ -13,9 +17,7 @@ def bitset_union_idem(a):
     case False{}:
       {==}
 
-# Law 2: 2-Tier Hierarchical Swarm Arbitration Associativity
-# Proves that arbitrating write-set bitmasks in 2 tiers (Tier 1: 28 Gana Lieutenants,
-# Tier 2: Root PulseTree) is algebraically identical to flat arbitration.
+# Law 2: Boolean OR associativity (three Boolean values).
 law hierarchical_2tier_union_assoc:
   for a: Bool
   for b: Bool
@@ -29,9 +31,8 @@ def hierarchical_2tier_union_assoc(a, b, c):
     case False{}:
       {==}
 
-# Law 3: Kekkai Sandbox Capability Attenuation Associativity (Article 7 / Law III)
-# Proves that nested subagent Kekkai permission intersections (Cap(Child) <= Cap(Parent))
-# are strictly associative across arbitrary subagent delegation depth.
+# Law 3: Boolean AND associativity. This does not state child <= parent,
+# strict attenuation, or correctness of a sandbox/delegation implementation.
 law kekkai_intersect_assoc:
   for a: Bool
   for b: Bool
@@ -45,9 +46,7 @@ def kekkai_intersect_assoc(a, b, c):
     case False{}:
       {==}
 
-# Law 4: Anti-Aug-1 Delta Stasis Preservation
-# Proves that when parked in Delta stasis (`stasis`) with zero external stimulus,
-# the stasis lock remains invariant.
+# Law 4: False is a right identity for Boolean OR. No lock is modeled.
 law anti_aug1_stasis_lock:
   for stasis: Bool
   {Bool.or(stasis, False{}) == stasis : Bool}
@@ -59,7 +58,8 @@ def anti_aug1_stasis_lock(stasis):
     case False{}:
       {==}
 
-# Law 5: Continuity Receipt & Pacemaker Epoch Chain Monotonicity
+# Law 5: Successor distributes through natural-number addition.
+# No epoch protocol, monotonic storage, or receipt chain is modeled.
 law citta_epoch_step_succ:
   for e: Nat
   for d: Nat
@@ -73,9 +73,8 @@ def citta_epoch_step_succ(e, d):
       %citta_epoch_step_succ(p, d) : {1n+Nat.add(p, 1n+d) == 1n+_ : Nat}
       {==}
 
-# Law 6: Victor Taelin Superoptimizer Redundant-Glyph Absorption Equivalence
-# Proves that eliminating a repeated glyph `a` after `(a | b)` preserves the exact
-# Kekkai capability and ScopeBitset2048 denotation.
+# Law 6: Repeating the first operand in Boolean OR does not change the result.
+# No optimizer or ScopeBitset2048 implementation is modeled.
 law superopt_absorption_equiv:
   for a: Bool
   for b: Bool
@@ -92,9 +91,8 @@ def superopt_absorption_equiv(a, b):
         case False{}:
           {==}
 
-# Law 7: AlphaEdit Null-Space Projection Invariance (Station 6: GAIOL)
-# Proves that adding a null-projected weight delta (`0n`) to any preserved constitutional
-# canary response `k0` leaves `k0` strictly invariant (`k0 + 0n == k0`).
+# Law 7: Zero is a right identity for natural-number addition.
+# No weights, null-space projection, or response behavior is modeled.
 law alpha_edit_nullspace_invariance:
   for k0: Nat
   {Nat.add(k0, 0n) == k0 : Nat}
@@ -107,10 +105,8 @@ def alpha_edit_nullspace_invariance(k0):
       %alpha_edit_nullspace_invariance(p) : {1n+Nat.add(p, 0n) == 1n+_ : Nat}
       {==}
 
-# Law 8: Tsao 15 Hz Counterfactual Ring Fallback Soundness (Station 10: MOR)
-# Proves that when a primary trajectory is blocked by a Citadel antibody (`False`)
-# and the pre-warmed counterfactual shadow slot is verified safe (`True`),
-# the ring chord disjunction guarantees a safe viable execution path (`True`).
+# Law 8: False is a left identity for Boolean OR. The result may be False.
+# This does not establish the safety or existence of a fallback execution path.
 law tsao_counterfactual_fallback_soundness:
   for cf_safe: Bool
   {Bool.or(False{}, cf_safe) == cf_safe : Bool}
@@ -122,10 +118,8 @@ def tsao_counterfactual_fallback_soundness(cf_safe):
     case False{}:
       {==}
 
-# Law 9: Non-Custodial Memory Crystal Anti-Rollback Monotonicity
-# Proves that updating an off-store state anchor revision index by successor
-# strictly yields a monotonic state, rendering whole-store snapshot rollback (T9)
-# and erasure resurrection (T10) algebraically unobservable as current state.
+# Law 9: Adding one equals the successor of adding zero over Nat.
+# No rollback/erasure adversary, off-store anchor, or read verifier is modeled.
 law crystal_anti_rollback_monotonicity:
   for rev: Nat
   {Nat.add(rev, 1n) == 1n+Nat.add(rev, 0n) : Nat}
@@ -140,4 +134,4 @@ def crystal_anti_rollback_monotonicity(rev):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    IO.print("ALL 9 CITTA-PAC, ANTI-ROLLBACK, ALPHA-EDIT & VALKYRIE LAWS VERIFIED")
+    IO.print("NINE BOOL/NAT ALGEBRAIC LEMMAS CHECKED; NO RUNTIME SECURITY MODEL")

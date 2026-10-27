@@ -1,103 +1,93 @@
-# 🛡️ The Citadel: 7-Ring Active Defense, Mandala Kekkai & Genjutsu Deception Array
-**Asymmetric Cybersecurity, Kernel Landlock Confinement, Post-Quantum Audit Chains & Halo 3-Flag CTF Arena for Autonomous AI Agents**
+# The Citadel
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Benchmark: 10/10 PASS](https://img.shields.io/badge/Citadel_10--Suite_Benchmark-100%25_PASS_(3.04s)-10b981)](defense/sangha_citadel_unified_benchmark.py)
-[![Formal Proofs: Bend 2.0.37](https://img.shields.io/badge/Formal_Proofs-Bend_2.0.37_Verified-a855f7)](proofs/citta_pac_laws.bend)
-[![Economic Asymmetry: 11.0Mx](https://img.shields.io/badge/Genjutsu_Asymmetry-11%2C024%2C242x-f59e0b)](defense/violet_digital_twin.py)
+Experimental security tools for agent workflows: Linux confinement, environment
+filtering, signed single-packet authorization, decoy services, receipt tooling,
+and small Bend algebraic examples. Code is MIT licensed.
 
----
+Start with [audit scope and evidence boundaries](docs/AUDIT_SCOPE.md). The old
+[practice audit report](docs/PRACTICE_AUDIT_REPORT.md) is withdrawn as an assurance
+claim. No independent security audit or production qualification is established
+by this repository's internal checks.
 
-## 1. Why The Citadel Changes the Cybersecurity Paradigm
+## What each part currently demonstrates
 
-Traditional cybersecurity relies on **passive perimeter walls** where *the defender must be right 100% of the time, and the attacker only needs to get lucky once*. Against autonomous AI offensive swarms (capable of scanning, weaponizing, and exfiltrating in seconds) and same-UID terminal agent vulnerabilities (where `chmod 0600` fails to protect local `auth.json` or `process.env` secrets from prompt-injected tools), passive walls collapse.
+| Area | Artifact | Evidence boundary |
+|---|---|---|
+| Signature experiments | `defense/violet_pqc.py` | Ed25519 plus custom hash-chain code. This is not a complete SLH-DSA implementation, a FIPS conformance claim, or a measured quantum-security margin. |
+| Single-packet authorization | `defense/violet_spa.py`, `defense/violet_xdp_spa.py`, `defense/violet_xdp_spa.c` | The Python benchmark exercises signed knocks, replay/tamper cases, and a Python packet-table simulation. Compiling a BPF ELF does not load it into a kernel. Its Python timings are not NIC/driver drop latency. |
+| Decoys and canaries | `defense/violet_digital_twin.py` | Controlled decoy and token-detection exercises. Detection rates apply to the supplied cases. The historical economic ratio used assumed token and CPU prices; it is not evidence of adversaries' real costs or general defensive advantage. |
+| Replay filters | `defense/violet_immunize.py` | Deterministic rule generation and replay against a finite corpus. No general zero-false-positive guarantee follows. |
+| Peer notifications and chunks | `defense/violet_mesh_event.py`, `defense/sangha_iroh_swarm.py` | Local protocol and chunk-integrity exercises. They do not establish independent multi-host coordination or a deployed network's behavior. |
+| Confinement and airlock | `defense/mandala_kekkai.py`, `defense/sangha_kekkai.py`, `plugins/opencode-citadel-airlock.js` | Experimental filesystem/network restrictions and environment filtering. Qualification requires actual kernel/support identity, readable and writable positive controls, denied negative controls, subprocess startup evidence, and precise runtime integration. |
+| Algebraic examples | `proofs/citta_pac_laws.bend` | Nine Bool/Nat lemmas. These do not prove implementation-level capability attenuation, anti-rollback correctness, safe fallback, or model-weight behavior. |
+| Synthetic folds | `proofs/citta_pac_swarm.bend`, `proofs/cpr_batch.bend` | Fixed-depth U32 arithmetic tree folds. Leaves are not running agents or cryptographically verified receipts. |
 
-**The Citadel (`VIOLET × Mandala Kekkai × WhiteMagic`) flips the asymmetry across 7 Concentric Rings:**
-- **The attacker must be right 100% of the time across every ring; the defender only needs the attacker to touch a single tripwire.**
-- Instead of cheap `404` responses, unauthorized probes enter **The Genjutsu** (Ring 2)—a procedural honey-subnet serving realistic AWS IMDS, Kubernetes SecretList, Docker daemon, and OpenAPI illusions laced with **stateless HMAC-SHA256 canary honeytokens**. Attackers burn **$0.19+ in frontier LLM tokens** (`39,533` tokens) while the defender spends **$0.000000018 in CPU** (**an `11,024,242×` economic cost asymmetry**).
-- Instead of cloud LLM safety guardrails that refuse to analyze live exploit payloads during an incident (the *"Daybreak Blue" refusal wall*), The Citadel uses **Zero-Refusal Deterministic Replay Immunization** (`0.53 ms`, `0%` false positives) and **Linux Kernel Landlock LSM (`ABI v6–v8`)** confinement.
+The seven-ring arrangement is a design organization. It does not mean an
+attacker must defeat every component or that touching one decoy prevents an
+attack. Source modules may retain historical names; use the boundaries above
+when interpreting those names and older reports.
 
----
+## Reproduce a bounded check
 
-## 2. The 7 Concentric Rings of the Citadel
-
-```text
-[RING 0: Post-Quantum Core]  NIST FIPS 203/204/205 & Grover Dual Ledgers (defense/violet_pqc.py)
-                             • Composite Hybrid Signatures: Ed25519 + SLH-DSA 99-Chain W-OTS+ (3.54 ms).
-                             • Grover-Proof Dual Ledgers: SHA-384 + BLAKE2b-512 (256-bit quantum work factor).
-                             • Wire Transport: X25519MLKEM768 (defeats Harvest Now, Decrypt Later).
-
-[RING 1: In-Driver Stealth]   eBPF / XDP Single-Packet Authorization (defense/violet_xdp_spa.c)
-                             • In-kernel NIC driver packet evaluation (2,488 – 3,233 ns XDP_DROP).
-                             • Zero sk_buff allocation; protected ports are invisible to internet scanners.
-
-[RING 2: The Genjutsu]       Cognitive Tarpit & Procedural Digital Twin (defense/violet_digital_twin.py)
-                             • Procedural AWS IMDS (169.254.169.254), K8s API, Docker & .env decoys.
-                             • Stateless HMAC-SHA256 honeytokens (0 disk writes on GET; 100% tripwire catch).
-                             • 5.2M× to 11.0M× economic token-drain asymmetry against offensive LLM swarms.
-
-[RING 3: Fast-Path Shield]   Zero-Refusal Replay Immunizer (defense/violet_immunize.py)
-                             • Synthesizes deterministic edge rules from live probes in 0.53 – 2.58 ms.
-                             • Replays against historical clean logs to guarantee 0% False Positives.
-
-[RING 4: Herd Immunity]      Event-Driven P2P Threat Gossip (defense/violet_mesh_event.py)
-                             • Ed25519-signed micro-deltas + 2,048-bit L1 Antibody Bloom Filter (0.76 µs/item).
-                             • Touching Node A pre-emptively blackholes the attacker across all peer nodes.
-
-[RING 5: Inner Kekkai]       Landlock filesystem confinement (`defense/opencode_kekkai_launcher.py`)
-                             • Kernel-enforced workspace filesystem rules; no network rights are installed.
-                             • Child environment is inherited; this launcher does not scrub credentials.
-
-[RING 6: Swarm Distribution] Native Iroh / BLAKE3 Merkle Worktree Swarm (defense/sangha_iroh_swarm.py)
-                             • 64KB content-addressed BLAKE3 Merkle pieces with O(1) poison-chunk rejection.
-```
-
----
-
-## 3. Verified 10-Suite Master Benchmark (`10/10 PASS` in `3.045s`)
-
-Run the entire 10-suite verification battery locally on Linux:
+Requirements: Python 3.10+ and a compatible Bend compiler on `PATH` (the current
+local reproduction used Bend 2.0.39). The report command does not import the
+product modules, read personal keys, or mutate a personal WhiteMagic store.
+Select an output directory outside this checkout to keep your working tree clean:
 
 ```bash
-python3 defense/sangha_citadel_unified_benchmark.py
-python3 defense/violet_stress_test.py
+python3 defense/practice_audit_battery.py --checks bend --output-dir /tmp/citadel-internal-checks
+python3 -m unittest discover -s defense -p test_practice_audit_reporting.py -v
 ```
 
-| Suite | Defense Layer Verified | Measured Metric | Latency | Status |
-|---|---|---|---|---|
-| **Suite 1: PQC Core** | `Ed25519 + FIPS 205 SLH-DSA` + Grover Dual Ledger | 256-bit quantum margin; 100% tamper reject | `10.15 ms` | **PASS** |
-| **Suite 2: eBPF / XDP SPA** | Driver-level pre-socket packet drop (`XDP_DROP`) | **`2,488 – 3,233 ns`** drop latency | `47.19 ms` | **PASS** |
-| **Suite 3: Digital Twin** | AWS IMDS, K8s & Docker Genjutsu Honeypots | `1,584.7 KB` served · **100% canary catch** | `1412.12 ms` | **PASS** |
-| **Suite 4: Iroh Swarm** | P2P BLAKE3 Merkle chunk transfer & poison reject | **100% O(1) poison rejection** · `0 B` Git egress | `545.80 ms` | **PASS** |
-| **Suite 5: Landlock LSM** | Kernel filesystem access rules | Blocked the controlled out-of-scope filesystem probe; network was not tested by this launcher smoke | `658.19 ms` | **PASS** |
-| **Suite 6: Invariants** | Line-speed syntactic & secret-leak replay gate | `9/9` clean passed · `1/1` secret leak caught | `5.24 ms` | **PASS** |
-| **Suite 7: Swarm VCS** | Multi-agent scope reservations & collision halt | Concurrent claims + 0 lock contention | `179.34 ms` | **PASS** |
-| **Suite 8: Genjutsu Asymmetry** | Attacker LLM token burn vs. defender CPU cost | `39,533` tokens (`$0.1977`) vs `$0.000000018` = **`5.2M×–11.0M×`** | `21.00 ms` | **PASS** |
-| **Suite 9: OpenCode fixture** | Synthetic environment canary and local rule-replay fixture | Does not establish launcher environment scrubbing or protection of real credentials | `32.56 ms` | **PASS (fixture only)** |
-| **Suite 10: Halo 3-Flag CTF** | Red Team Swarm (9 waves) vs. Blue Team Citadel | **BLUE 3 — RED 0 (`9/9` Counter-Captures · `UNTOUCHABLE`)** | `129.54 ms` | **PASS** |
+With `cryptography` installed, `python3 -m unittest discover -s defense -p
+test_pqc_claim_boundaries.py -v` also checks experimental output disclosures,
+an isolated signature/tamper fixture, and failure exit status. It uses temporary
+fixture keys and does not qualify the custom construction for security use.
 
----
+The Bend selection runs both the front-end check and the separate `--verdict`
+kernel recheck. The latter needs the kernel dependencies reported by Bend
+(the local tool requests Lean 4.34.0 or a built `BENDTT` kernel). Missing kernel
+infrastructure is `NOT_EVALUATED`, even if the front-end checker succeeds.
 
-## 4. Interactive Halo 3-Flag CTF Arena Visualizer (`arena/halo_ctf_visualizer.html`)
+The paired JSON/Markdown reports record compiler and source hashes, command
+outputs, process wall times, and synthetic leaves per second calculated from
+the same measurement. Wall time includes compiler checking and startup.
+`PASS` applies to the selected checks only; unsupported lanes remain
+`NOT_EVALUATED` with reasons.
 
-Open [`arena/halo_ctf_visualizer.html`](arena/halo_ctf_visualizer.html) in any browser to watch **Red Team (Autonomous Offensive Swarm)** vs. **Blue Team (Citadel 7-Ring Defenders)** battle across the 2D **Blood Gulch Citadel Canyon** map:
-- **Live Agent Killfeed**: Watch every offensive wave get intercepted in real time (`[Blue-1 · eBPF-XDP-Driver] ⚡ [Red-7 · Port-Scanner-Bot] (3,233 ns XDP_DROP)`, `[Blue-4 · Canary-Sniper] 🎯 [Red-3 · Env-Key-Drainer] (Stateless HMAC Canary Snipe)`).
-- **Protected vs. Unprotected Toggle**: Click **"⚠️ Simulate Unprotected Agent Runner"** to see how a standard same-UID agent runner loses all 3 flags (`auth.json`, `CRYSTAL_LINEAGE`, and `GENJUTSU_NEXUS`), then switch back to **"▶ Play Match (Citadel Protected)"** or trigger a **25x Red Swarm Blitz**.
+Exit status is `0` when all selected checks pass, `1` for an actual failed check,
+and `2` when selected checks cannot be evaluated. Missing engines, matching
+crashes, empty output, and malformed verifier results cannot create parity.
 
----
+For a separate CPR agreement check, first build the Python/Rust/JavaScript
+verifiers according to the selected CPR checkout's own instructions, then pass
+its exact location explicitly:
 
-## 5. OpenCode v2.1.1 Security Alignment & Drop-In Airlock Plugin
+```bash
+python3 defense/practice_audit_battery.py --checks differential --cpr-dir /path/to/continuity-receipt --output-dir /tmp/citadel-cpr-agreement
+```
 
-See [`docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md`](docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md) for the OpenCode `v2.1.1` study and implementation notes. The standalone launcher demonstrates filesystem restrictions only; plugin hooks and other credential controls are separate code paths and are not established by its Landlock smoke.
+This checks the three bundle manifests, honors their anchor options, and
+compares verdicts and error codes against each other and the declared expected
+outcomes. Manifests themselves are not counted as receipt fixtures.
+Agreement between three implementations maintained in the same project is
+useful consistency evidence; an independent oracle and source-to-binary build
+provenance still need separate evidence.
 
----
+## Demonstrations and integration work
 
-## 6. Machine-Checked Formal Proofs (`proofs/`)
+[`arena/halo_ctf_visualizer.html`](arena/halo_ctf_visualizer.html) is an illustrative
+animation. Its scripted scores, killfeed, and timing labels are not live
+red-team telemetry. The legacy master benchmark and escape/mutation scripts
+also need review before their printed success labels can serve as acceptance
+criteria; see [the open review list](docs/AUDIT_SCOPE.md).
 
-- [`proofs/citta_pac_laws.bend`](proofs/citta_pac_laws.bend): Bend 2.0.37 machine-checked proofs of 2,048-bit `ScopeBitset2048` idempotence, 2-tier 28-Gana hierarchical associativity, Mandala Kekkai boundary intersection associativity, and Anti-Ouroboros stasis locks (`234.4 ms`).
-- [`proofs/citta_pac_swarm.bend`](proofs/citta_pac_swarm.bend): Parallel tree-fold arbitration over `4,194,304` leaf clones (`8,388,607` tree nodes) in `12.65 ms` (`331.5M clones/sec`).
-
----
+[`docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md`](docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md)
+is a maintainer-authored study of a named historical version. The plugin and
+launcher need qualification against the exact host/runtime being used. Installing
+an environment filter alone does not establish protection of credentials,
+transcripts, or every execution path.
 
 ## License
-MIT License · Copyright (c) 2026 Lucas Bailey / WhiteMagic Labs (`https://whitemagic.dev`)
+
+[MIT](LICENSE) · Copyright (c) 2026 Lucas Bailey / WhiteMagic Labs.
