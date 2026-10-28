@@ -74,6 +74,31 @@ Agreement between three implementations maintained in the same project is
 useful consistency evidence; an independent oracle and source-to-binary build
 provenance still need separate evidence.
 
+## Standalone launcher smoke
+
+`defense/opencode_kekkai_launcher.py` uses Python's standard library. The
+Linux backend needs x86_64 or arm64 and a kernel exposing Landlock; unsupported
+hosts fail before spawning the child. Run a harmless owned-workspace fixture
+with a deliberately minimal environment:
+
+```sh
+scratch=$(mktemp -d) || exit 1
+workspace="$scratch/workspace"
+mkdir "$scratch/home" "$workspace"
+printf '%s\n' 'owned launcher fixture' > "$workspace/probe.txt"
+env -i PATH=/usr/bin:/bin HOME="$scratch/home" python3 \
+  defense/opencode_kekkai_launcher.py --workspace "$workspace" -- \
+  /usr/bin/cat "$workspace/probe.txt"
+rm -r -- "$scratch"
+```
+
+The launcher installs filesystem restrictions only. It inherits the child
+environment and leaves networking unrestricted; it does not scrub credentials
+or establish an OpenCode/Devin client integration. The fixture above only
+checks child startup and an allowed read. Use the separate confinement
+positive/negative controls before making a containment claim. macOS has a
+separate Seatbelt path; this Linux fixture does not qualify it.
+
 ## Demonstrations and integration work
 
 [`arena/halo_ctf_visualizer.html`](arena/halo_ctf_visualizer.html) is an illustrative
