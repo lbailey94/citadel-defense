@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
-"""violet_pqc.py — NIST Post-Quantum Cryptographic Migration Engine (FIPS 203, 204, 205).
+"""Experimental Ed25519 plus custom hash-chain signatures and dual hashes.
 
-Fortifies the VIOLET Citadel and Sangha Substrate against 'Q-Day' and quantum computing breakthroughs:
-  1. Composite Hybrid Signatures (FIPS 205 SLH-DSA W-OTS+ + Classical Ed25519):
-     - Combines classical Ed25519 with tweakable Winternitz W-OTS+ hash-chain signatures
-       (96 SHA-384 message nibbles + 3 base-16 checksum nibbles = 99 tweakable hash chains).
-     - Archival witness chains are signed with hash-based math that does not rely on
-       algebraic assumptions (unbreakable by Shor's algorithm) and rejects 1-bit message
-       or signature tampering via full chain completion + checksum verification.
-  2. Grover-Proof Dual-Ledger Hashing (SHA-384 + BLAKE2b-512):
-     - Eliminates Grover's quadratic speedup vulnerability.
-     - Guarantees >= 192 to 256 bits of quantum work-factor resistance.
-  3. Wire Transport ML-KEM-768 Profile (FIPS 203):
-     - Mandates X25519MLKEM768 hybrid key exchange to defeat 'Harvest Now, Decrypt Later'.
-
-Lineage: VIOLET Pillar P1 & P4 × NIST Post-Quantum Standards.
+This is not a complete SLH-DSA implementation or validated FIPS 203/204/205
+cryptography. The hash-chain construction reuses its seed across calls; its
+security under multiple signatures has not been established. No quantum work
+factor or transport security follows from the benchmark. Historical class,
+wire-format, and CLI labels remain for compatibility, not as conformance claims.
+See docs/AUDIT_SCOPE.md before interpreting this prototype's output.
 """
 
 from __future__ import annotations
@@ -61,7 +53,7 @@ def _message_to_wots_nibbles(message: bytes) -> list[int]:
 
 
 def _wots_chain_step(val: bytes, pk_seed: bytes, chain_idx: int, start_step: int, steps: int) -> bytes:
-    """RFC 8391 / FIPS 205 tweakable hash chain: steps `val` forward `steps` times from `start_step`."""
+    """Custom tweakable hash-chain step; this is not a FIPS conformance claim."""
     curr = val
     for s in range(start_step, start_step + steps):
         curr = hashlib.sha256(pk_seed + bytes([chain_idx, s]) + curr).digest()
@@ -69,12 +61,10 @@ def _wots_chain_step(val: bytes, pk_seed: bytes, chain_idx: int, start_step: int
 
 
 class StatelessHashSignature:
-    """Standard-compliant Winternitz W-OTS+ Hash-Based Signature (FIPS 205 / RFC 8391 WOTS+ core).
+    """Custom Winternitz-style hash-chain experiment, not standard SLH-DSA.
 
-    Security relies purely on collision- and preimage-resistance of tweakable cryptographic
-    hash functions (BLAKE2b / SHA-384 / SHA-256), making it 100% immune to Shor's algorithm.
-    Includes the mandatory Winternitz inverse checksum chains so no message nibble can be
-    forged forward or backward without inverting the underlying hash function.
+    Checksums and tweakable chains alone do not implement a stateless signature
+    scheme or establish security when one key is reused for multiple messages.
     """
 
     def __init__(self, seed: bytes | None = None):
@@ -155,7 +145,7 @@ class StatelessHashSignature:
 
 
 class HybridCompositeSigner:
-    """Composite Hybrid Signer: Classical Ed25519 + NIST FIPS 205 Stateless Hash (SLH-DSA W-OTS+)."""
+    """Ed25519 plus an experimental reusable-key hash-chain construction."""
 
     def __init__(self, key_path: Path = KEY_PATH, pqc_key_path: Path = PQC_KEY_PATH):
         self.key_path = key_path
@@ -192,19 +182,20 @@ class HybridCompositeSigner:
         return signer
 
     def sign_hybrid(self, message: bytes) -> dict:
-        """Produce a composite hybrid signature requiring BOTH Ed25519 and SLH-DSA W-OTS+ to validate."""
+        """Produce the historical composite format; no FIPS conformance is claimed."""
         t0 = time.time()
         # 1. Classical Ed25519 signature (64 bytes)
         ed_sig = self.ed25519_sk.sign(message)
         ed_sig_b64 = base64.urlsafe_b64encode(ed_sig).decode("ascii")
         ed_pub_hex = self.ed25519_sk.public_key().public_bytes_raw().hex()
 
-        # 2. Post-quantum hash-based signature (99 tweakable W-OTS+ chains + checksum)
+        # 2. Experimental hash-chain signature; legacy wire labels are retained.
         slh_sig = self.slh_signer.sign(message)
 
         elapsed_ms = (time.time() - t0) * 1000
         return {
             "hybrid_version": "v2-fips205-wots99",
+            "security_status": "experimental_not_fips_validated",
             "ts": datetime.now(timezone.utc).isoformat(),
             "classical": {
                 "algorithm": "Ed25519",
@@ -226,7 +217,7 @@ class HybridCompositeSigner:
         expected_ed25519_pub: str | None = None,
         expected_pqc_root: str | None = None,
     ) -> bool:
-        """Verify both classical Ed25519 and post-quantum W-OTS+ cryptographic layers."""
+        """Check Ed25519 and the custom hash-chain format; no standard conformance follows."""
         try:
             # 1. Verify Classical Ed25519
             cl = hybrid_envelope.get("classical", {})
@@ -240,7 +231,7 @@ class HybridCompositeSigner:
             sig = base64.urlsafe_b64decode(sig_b64 + "==")
             pub.verify(sig, message)
 
-            # 2. Verify Post-Quantum SLH-DSA W-OTS+
+            # 2. Check the custom hash-chain format under its historical wire key.
             pq = hybrid_envelope.get("post_quantum", {})
             slh_sig = pq.get("signature", {})
             outer_root = pq.get("pubkey_root") or expected_pqc_root
@@ -253,17 +244,15 @@ class HybridCompositeSigner:
 
 
 class GroverProofDualLedger:
-    """Quantum-Resistant Dual-Hash Ledger Chain (SHA-384 + BLAKE2b-512).
+    """Historical name for combined digests; no quantum work factor is established.
 
-    Protects audit chains against Grover's quadratic quantum search:
-      Work factor for 384-bit hash = 2^192 quantum operations.
-      Work factor for 512-bit hash = 2^256 quantum operations.
-      Both remain physically impossible across the lifespan of the universe.
+    The combined output is SHA-256 over two digest encodings. Combining hashes
+    does not establish the old advertised quantum-security margin.
     """
 
     @staticmethod
     def compute_dual_hash(prev_hash: str, payload_str: str) -> dict:
-        """Compute dual quantum-resistant hashes over previous link + current payload."""
+        """Compute the existing digest format without asserting a security margin."""
         combined = (prev_hash + payload_str).encode("utf-8")
         h_sha384 = hashlib.sha384(combined).hexdigest()
         h_blake2b = hashlib.blake2b(combined, digest_size=64).hexdigest()
@@ -273,15 +262,16 @@ class GroverProofDualLedger:
             "composite_hash": composite,
             "sha384": h_sha384,
             "blake2b_512": h_blake2b,
-            "quantum_security_margin_bits": 256,
+            "quantum_security_margin_bits": None,
+            "security_evaluation": "not_established",
         }
 
 
 def get_x25519_mlkem768_caddy_snippet() -> str:
-    """Generate Caddy configuration directive mandating X25519MLKEM768 post-quantum key exchange."""
+    """Example TLS curve preferences; this does not prove deployed negotiation."""
     return """
-# VIOLET Citadel Post-Quantum Wire Transport (NIST FIPS 203)
-# Mandates X25519MLKEM768 hybrid key exchange to defeat 'Harvest Now, Decrypt Later'
+# Candidate TLS preferences, including classical fallbacks.
+# Check the actual Caddy build and negotiated connection separately.
 tls {
     curves x25519mlkem768 x25519 secp256r1
     protocols tls1.3
@@ -321,6 +311,7 @@ def run_pqc_benchmark() -> tuple[float, dict, bool]:
         payload_str=sample_payload.decode(),
     )
     hybrid_sig["tamper_tests"] = {
+        "authentic_composite_verifies": valid_authentic,
         "rejects_tampered_message": rejects_tampered_msg,
         "rejects_tampered_pqc_element": rejects_tampered_pqc_elem,
         "rejects_tampered_pubkey_root": rejects_tampered_root,
@@ -336,18 +327,24 @@ def run_pqc_benchmark() -> tuple[float, dict, bool]:
     return elapsed, hybrid_sig, is_valid
 
 
-if __name__ == "__main__":
+def main() -> int:
     elapsed, sig, valid = run_pqc_benchmark()
     t_tests = sig.get("tamper_tests", {})
     print("═" * 68)
-    print("  VIOLET Post-Quantum Cryptographic Migration Engine (FIPS 204/205)")
+    print("  VIOLET experimental signature and digest fixtures")
     print("═" * 68)
     print(f"  Hybrid Sign & Verify Latency : {elapsed*1000:.2f} ms")
-    print(f"  Classical (Ed25519) Valid    : True")
-    print(f"  Post-Quantum (W-OTS+ 99)     : {valid}")
+    print(f"  Authentic Composite Verifies: {t_tests.get('authentic_composite_verifies')}")
+    print(f"  Selected Fixture Checks     : {valid}")
     print(f"  Tamper Test (1-bit Message)  : {'REJECTED (PASS)' if t_tests.get('rejects_tampered_message') else 'FAILED'}")
     print(f"  Tamper Test (1-bit Element)  : {'REJECTED (PASS)' if t_tests.get('rejects_tampered_pqc_element') else 'FAILED'}")
     print(f"  Tamper Test (Root Mismatch)  : {'REJECTED (PASS)' if t_tests.get('rejects_tampered_pubkey_root') else 'FAILED'}")
-    print(f"  Grover Quantum Margin        : 256 bits (SHA-384 + BLAKE2b-512)")
-    print(f"  Wire Transport Standard      : X25519MLKEM768 (FIPS 203)")
+    print("  Quantum Security Margin      : NOT ESTABLISHED")
+    print("  FIPS Conformance             : NOT ESTABLISHED")
+    print("  Deployed TLS Negotiation     : NOT EVALUATED")
     print("═" * 68)
+    return 0 if valid else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

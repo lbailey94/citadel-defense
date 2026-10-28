@@ -1,9 +1,8 @@
 import Base
 
-# Parallel Fork-Join Gana-Hexagram-PRAY Swarm Arbiter in Bend 2.0.37.
-# Evaluates 2^depth shadow clones (depth=22 -> 4,194,304 clones / 8,388,607 tree nodes),
-# computing each clone's (28-Gana x 64-Hexagram = 1,792 seal) resonance score and
-# merging non-conflicting bitmasks up the binary fork-join tree with strictly affine terms.
+# Synthetic U32 arithmetic tree fold in Bend.
+# depth=22 -> 4,194,304 leaves / 8,388,607 tree nodes. Leaves are arithmetic
+# evaluations, not running agents. No reservations or conflict checks occur.
 def swarm_arbitrate(+depth: Nat, +seed: U32) -> U32:
   match depth:
     case 0n:
