@@ -1,6 +1,6 @@
 # Practice report status
 
-The October 24, 2026 practice report is withdrawn as a security-assurance claim.
+The October 26, 2026 practice report is withdrawn as a security-assurance claim.
 Its `100/100` score and `BATTLE-TESTED · AUDIT-READY` verdict combined real
 operations with Python simulations and assigned constants. They do not establish
 an independent audit or production readiness.
