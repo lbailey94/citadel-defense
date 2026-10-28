@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import citadel_antibody_sync as antibody_sync
 import violet_pqc as pqc
 
 
@@ -15,6 +16,26 @@ class ExperimentalSignatureReportingTests(unittest.TestCase):
         self.assertEqual(len(result["composite_hash"]), 64)
         self.assertIsNone(result["quantum_security_margin_bits"])
         self.assertEqual(result["security_evaluation"], "not_established")
+
+    def test_antibody_sync_bundle_does_not_claim_a_quantum_margin(self):
+        sample = {
+            "source_node": "vps-citadel-203.0.113.10",
+            "honeypot_events_scanned": 10,
+            "counts": {
+                "sessions": 1,
+                "credentials": 1,
+                "payloads": 1,
+                "attacker_ips": 1,
+                "gateway_anomalies": 0,
+                "total_unique_antibodies": 4,
+            },
+            "antibody_digests_u64": [1, 2, 3, 4],
+        }
+        bundle = antibody_sync.build_antibody_bundle(sample, 12.5)
+        commitment = bundle["dual_digest_commitment"]
+        self.assertIsNone(commitment["quantum_security_margin_bits"])
+        self.assertEqual(commitment["security_evaluation"], "not_established")
+        self.assertNotIn("quantum_work_factor_bits", commitment)
 
     def test_signature_fixture_is_explicitly_experimental(self):
         with tempfile.TemporaryDirectory() as scratch:

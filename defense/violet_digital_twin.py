@@ -68,13 +68,21 @@ class ProceduralDigitalTwin:
         """IMDSv2 session token simulation."""
         return f"AQAAA{secrets.token_urlsafe(32)}="
 
-    def get_aws_credentials(self) -> dict:
+    def get_aws_credentials(self, src_ip: str | None = None) -> dict:
         """Return fake AWS IAM credentials embedded with a stateless HMAC canary honeytoken."""
-        canary_access = f"ASIACANARY{secrets.token_hex(6).upper()}"
+        # The access-key ID is the only part of a SigV4 request that is ever sent, so it must
+        # itself be an authenticated, watermarked token (aws_iam) to be detectable on replay.
+        canary_access = self.canary_mgr.mint_token(
+            label="aws_imds_access_key",
+            token_type="aws_iam",
+            persist=False,
+            src_ip=src_ip,
+        )
         canary_secret = self.canary_mgr.mint_token(
             label="aws_imds_honeykey",
             token_type="bearer_jwt",
             persist=False,
+            src_ip=src_ip,
         )
         return {
             "Code": "Success",
@@ -86,7 +94,7 @@ class ProceduralDigitalTwin:
             "Expiration": "2030-01-01T00:00:00Z",
         }
 
-    def get_aws_metadata(self, subpath: str) -> str | dict:
+    def get_aws_metadata(self, subpath: str, src_ip: str | None = None) -> str | dict:
         """Procedural response for AWS EC2 metadata endpoints."""
         clean = subpath.strip("/")
         if not clean or clean == "latest/meta-data":
@@ -101,17 +109,18 @@ class ProceduralDigitalTwin:
         if clean.endswith("iam/security-credentials") or clean.endswith("iam/security-credentials/"):
             return "ProductionCitadelAdminRole"
         if "ProductionCitadelAdminRole" in clean:
-            return self.get_aws_credentials()
+            return self.get_aws_credentials(src_ip)
         return f"mock_value_{secrets.token_hex(4)}"
 
     # --- GCP Metadata Decoys (metadata.google.internal) ---
 
-    def get_gcp_token(self) -> dict:
+    def get_gcp_token(self, src_ip: str | None = None) -> dict:
         """Return fake GCP OAuth2 access token seeded with stateless canary token."""
         token = self.canary_mgr.mint_token(
             label="gcp_metadata_honeytoken",
             token_type="bearer_jwt",
             persist=False,
+            src_ip=src_ip,
         )
         return {
             "access_token": token,
@@ -121,12 +130,13 @@ class ProceduralDigitalTwin:
 
     # --- Kubernetes API Server Decoys (/api/v1/...) ---
 
-    def get_k8s_secrets(self, depth: int = 5) -> dict:
+    def get_k8s_secrets(self, depth: int = 5, src_ip: str | None = None) -> dict:
         """Generate high-entropy, deeply nested Kubernetes secrets and config maps."""
         canary_k8s = self.canary_mgr.mint_token(
             label="k8s_cluster_admin_sa_token",
             token_type="bearer_jwt",
             persist=False,
+            src_ip=src_ip,
         )
 
         items = []
@@ -176,12 +186,13 @@ class ProceduralDigitalTwin:
 
     # --- Docker Daemon Decoys (/v1.24/containers/json) ---
 
-    def get_docker_containers(self) -> list[dict]:
+    def get_docker_containers(self, src_ip: str | None = None) -> list[dict]:
         """Generate simulated Docker daemon container listings with decoy environment variables."""
         canary_env = self.canary_mgr.mint_token(
             label="docker_daemon_env_canary",
             token_type="openai_key",
             persist=False,
+            src_ip=src_ip,
         )
         return [
             {
@@ -214,6 +225,84 @@ class ProceduralDigitalTwin:
                 "Labels": {"cluster.role": "treasury"},
             },
         ]
+
+    # --- Dotenv credential bait + LLM provider-API decoys ---
+
+    def get_env_file(self, src_ip: str | None = None) -> str:
+        """Realistic dotenv bait. Every credential is an authenticated, watermarked canary.
+
+        Provider-key canaries only show up on our side if the attacker replays them against a
+        host we serve, so the *_BASE_URL variables point at decoy provider routes on this node
+        and WM_API_KEY is a credential for a service we actually run.
+        """
+        mint = self.canary_mgr.mint_token
+        lines = [
+            "# deploy-managed; do not commit",
+            "APP_ENV=production",
+            "APP_DEBUG=false",
+            "APP_URL=https://app.internal.example",
+            "DB_CONNECTION=pgsql",
+            "DB_HOST=10.0.4.12",
+            "DB_PORT=5432",
+            "DB_DATABASE=app_prod",
+            "DB_USERNAME=app_rw",
+            f"DB_PASSWORD={secrets.token_urlsafe(18)}",
+            f"REDIS_URL=redis://:{secrets.token_urlsafe(12)}@10.0.4.20:6379/0",
+            f"OPENAI_API_KEY={mint('envopenai', 'openai_key', persist=False, src_ip=src_ip)}",
+            "OPENAI_BASE_URL=https://mcp.whitemagic.dev/v1",
+            f"ANTHROPIC_API_KEY={mint('envanthropic', 'anthropic_key', persist=False, src_ip=src_ip)}",
+            "ANTHROPIC_BASE_URL=https://mcp.whitemagic.dev",
+            f"AWS_ACCESS_KEY_ID={mint('awsiam', 'aws_iam', persist=False, src_ip=src_ip)}",
+            f"AWS_SECRET_ACCESS_KEY={mint('envawssecret', 'generic', persist=False, src_ip=src_ip)}",
+            "AWS_DEFAULT_REGION=us-east-1",
+            f"WM_API_KEY={mint('envwmkey', 'x402_treasury', persist=False, src_ip=src_ip)}",
+            "WM_MCP_URL=https://mcp.whitemagic.dev/mcp",
+        ]
+        return "\n".join(lines) + "\n"
+
+    def provider_decoy(self, path: str, method: str = "GET") -> dict | None:
+        """Neutral, plausible LLM provider API responses so key validators keep talking."""
+        p = path.rstrip("/")
+        now = int(time.time())
+        if p == "/v1/models":
+            return {
+                "object": "list",
+                "data": [
+                    {"id": mid, "object": "model", "created": now - 86400, "owned_by": "system"}
+                    for mid in ("gpt-4o", "gpt-4o-mini", "text-embedding-3-small")
+                ],
+            }
+        if p in ("/v1/chat/completions", "/v1/completions", "/v1/responses"):
+            return {
+                "id": f"chatcmpl-{secrets.token_hex(12)}",
+                "object": "chat.completion",
+                "created": now,
+                "model": "gpt-4o",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "OK"},
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
+            }
+        if p == "/v1/messages":
+            return {
+                "id": f"msg_{secrets.token_hex(12)}",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet",
+                "content": [{"type": "text", "text": "OK"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 8, "output_tokens": 1},
+            }
+        if p == "/v1/embeddings":
+            return {
+                "object": "list",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.0] * 8}],
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            }
+        return None
 
     # --- Context-Window Poisoning & Adversarial Prompts ---
 
@@ -299,7 +388,7 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
                 extra_headers["X-aws-ec2-metadata-token-ttl-seconds"] = "21600"
                 self._send_response(200, "text/plain", token, extra_headers)
                 return
-            res = self.twin.get_aws_metadata(path)
+            res = self.twin.get_aws_metadata(path, client_ip)
             if isinstance(res, dict):
                 self._send_response(200, "application/json", json.dumps(res, indent=2), extra_headers)
             else:
@@ -309,7 +398,7 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. GCP computeMetadata Simulation
         if "computeMetadata" in path:
             if "token" in path:
-                res = self.twin.get_gcp_token()
+                res = self.twin.get_gcp_token(client_ip)
                 self._send_response(200, "application/json", json.dumps(res), extra_headers)
             else:
                 self._send_response(200, "text/plain", f"gcp-vm-{secrets.token_hex(4)}", extra_headers)
@@ -317,20 +406,36 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         # 3. Kubernetes In-Cluster API Simulation
         if path.startswith("/api/v1/namespaces") or path == "/api/v1" or "k8s" in path:
-            secrets_payload = self.twin.get_k8s_secrets(depth=4)
+            secrets_payload = self.twin.get_k8s_secrets(depth=4, src_ip=client_ip)
             self._send_response(200, "application/json", json.dumps(secrets_payload, indent=2), extra_headers)
             return
 
         # 4. Docker Socket / Containers Simulation
         if "containers/json" in path or path.startswith("/v1.") or path == "/info":
-            containers = self.twin.get_docker_containers()
+            containers = self.twin.get_docker_containers(client_ip)
             self._send_response(200, "application/json", json.dumps(containers, indent=2), extra_headers)
+            return
+
+        # 4b. Dotenv credential bait (stateless watermarked canaries)
+        if path.startswith("/.env"):
+            self._send_response(
+                200, "text/plain; charset=utf-8", self.twin.get_env_file(client_ip), extra_headers
+            )
+            return
+
+        # 4c. LLM provider-API decoys: validators replaying harvested keys against a
+        # *_BASE_URL we published in the bait land here (canary check already ran above).
+        provider = self.twin.provider_decoy(path, self.command)
+        if provider is not None:
+            self._send_response(200, "application/json", json.dumps(provider), extra_headers)
             return
 
         # 5. High-Entropy Cognitive Tarpit & Infinite Schema Generator
         if path.startswith("/api/v") or path.startswith("/vault") or path.startswith("/.env") or path.startswith("/credentials"):
             adv_prompt = self.twin.generate_adversarial_prompt()
-            honey_jwt = self.twin.canary_mgr.mint_token("api_tarpit_jwt", "bearer_jwt", persist=False)
+            honey_jwt = self.twin.canary_mgr.mint_token(
+                "api_tarpit_jwt", "bearer_jwt", persist=False, src_ip=client_ip
+            )
             deep_spec = {
                 "schema_version": "v4.2-enclave",
                 "shard_id": secrets.token_hex(16),

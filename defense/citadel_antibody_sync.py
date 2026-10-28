@@ -11,9 +11,11 @@ VPS Citadel (`203.0.113.10`):
   2. VPS Sentinel Blue-Ops Ledger (`/var/lib/whitemagic-hosted/defense/vps-sentinel.chain.jsonl`)
   3. Gateway Rejected Payment / Probe Fingerprints (`/var/lib/whitemagic-hosted*/access.jsonl`)
 
-Computes a Grover-proof dual hash (`SHA-384 + BLAKE2b-512`) over the consolidated antibody
+Computes a dual digest commitment (`SHA-384 + BLAKE2b-512`) over the consolidated antibody
 manifest and writes it to `~/.local/state/whitemagic/citadel-antibodies-live.json` for
 direct ingestion by `WMv10`'s `CitadelAntibodyBloom2048` and `CittaOscillatorEngine`.
+Dual digests provide an integrity commitment over the extracted digest list; they do not
+establish a calibrated quantum security margin.
 """
 
 from __future__ import annotations
@@ -114,6 +116,29 @@ print(json.dumps({
 """
 
 
+def build_antibody_bundle(data: dict, elapsed_ms: float) -> dict:
+    canon_bytes = json.dumps(data["antibody_digests_u64"], separators=(",", ":")).encode("utf-8")
+    sha384_hex = hashlib.sha384(canon_bytes).hexdigest()
+    blake2b_hex = hashlib.blake2b(canon_bytes, digest_size=64).hexdigest()
+    commitment = {
+        "sha384": sha384_hex,
+        "blake2b_512": blake2b_hex,
+        "quantum_security_margin_bits": None,
+        "security_evaluation": "not_established",
+    }
+    return {
+        "schema": "wm.citadel-antibody-sync/1.0",
+        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "sync_latency_ms": round(elapsed_ms, 2),
+        "source_node": data["source_node"],
+        "honeypot_events_scanned": data["honeypot_events_scanned"],
+        "counts": data["counts"],
+        "dual_digest_commitment": commitment,
+        "grover_dual_commitment": commitment,
+        "antibody_digests_u64": data["antibody_digests_u64"],
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="citadel_antibody_sync")
     ap.add_argument("--host", default="whitemagic", help="SSH host alias for the production VPS")
@@ -135,25 +160,9 @@ def main() -> int:
 
     data = json.loads(proc.stdout.strip())
     elapsed_ms = (time.time() - t0) * 1000.0
-
-    canon_bytes = json.dumps(data["antibody_digests_u64"], separators=(",", ":")).encode("utf-8")
-    sha384_hex = hashlib.sha384(canon_bytes).hexdigest()
-    blake2b_hex = hashlib.blake2b(canon_bytes, digest_size=64).hexdigest()
-
-    bundle = {
-        "schema": "wm.citadel-antibody-sync/1.0",
-        "synced_at": datetime.now(timezone.utc).isoformat(),
-        "sync_latency_ms": round(elapsed_ms, 2),
-        "source_node": data["source_node"],
-        "honeypot_events_scanned": data["honeypot_events_scanned"],
-        "counts": data["counts"],
-        "grover_dual_commitment": {
-            "sha384": sha384_hex,
-            "blake2b_512": blake2b_hex,
-            "quantum_work_factor_bits": 256,
-        },
-        "antibody_digests_u64": data["antibody_digests_u64"],
-    }
+    bundle = build_antibody_bundle(data, elapsed_ms)
+    sha384_hex = bundle["dual_digest_commitment"]["sha384"]
+    blake2b_hex = bundle["dual_digest_commitment"]["blake2b_512"]
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
