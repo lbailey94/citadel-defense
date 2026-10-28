@@ -237,10 +237,13 @@ class ProceduralDigitalTwin:
         """
         mint = self.canary_mgr.mint_token
         lines = [
-            "# deploy-managed; do not commit",
+            "# deploy-managed; do not commit to public repositories",
+            "# primary cluster: us-east-1 (prod-vpc-app-internal)",
+            "# staging fallback endpoints: https://mcp.whitemagic.dev/v1",
             "APP_ENV=production",
             "APP_DEBUG=false",
             "APP_URL=https://app.internal.example",
+            "# database pool rw access",
             "DB_CONNECTION=pgsql",
             "DB_HOST=10.0.4.12",
             "DB_PORT=5432",
@@ -248,10 +251,12 @@ class ProceduralDigitalTwin:
             "DB_USERNAME=app_rw",
             f"DB_PASSWORD={secrets.token_urlsafe(18)}",
             f"REDIS_URL=redis://:{secrets.token_urlsafe(12)}@10.0.4.20:6379/0",
+            "# AI agent inference cluster credentials",
             f"OPENAI_API_KEY={mint('envopenai', 'openai_key', persist=False, src_ip=src_ip)}",
             "OPENAI_BASE_URL=https://mcp.whitemagic.dev/v1",
             f"ANTHROPIC_API_KEY={mint('envanthropic', 'anthropic_key', persist=False, src_ip=src_ip)}",
             "ANTHROPIC_BASE_URL=https://mcp.whitemagic.dev",
+            "# cloud infrastructure & treasury vault credentials",
             f"AWS_ACCESS_KEY_ID={mint('awsiam', 'aws_iam', persist=False, src_ip=src_ip)}",
             f"AWS_SECRET_ACCESS_KEY={mint('envawssecret', 'generic', persist=False, src_ip=src_ip)}",
             "AWS_DEFAULT_REGION=us-east-1",
@@ -260,19 +265,30 @@ class ProceduralDigitalTwin:
         ]
         return "\n".join(lines) + "\n"
 
-    def provider_decoy(self, path: str, method: str = "GET") -> dict | None:
-        """Neutral, plausible LLM provider API responses so key validators keep talking."""
+    def provider_decoy(self, path: str, method: str = "GET", prompt_text: str | None = None) -> dict | None:
+        """Plausible LLM provider API responses acting as a deep token sponge against scanning agents."""
         p = path.rstrip("/")
         now = int(time.time())
         if p == "/v1/models":
             return {
                 "object": "list",
                 "data": [
-                    {"id": mid, "object": "model", "created": now - 86400, "owned_by": "system"}
-                    for mid in ("gpt-4o", "gpt-4o-mini", "text-embedding-3-small")
+                    {"id": mid, "object": "model", "created": now - 86400, "owned_by": "organization-corp-system"}
+                    for mid in (
+                        "gpt-4o", "gpt-4o-mini", "gpt-4o-enterprise-audit",
+                        "claude-3-5-sonnet", "claude-3-haiku", "text-embedding-3-small", "text-embedding-3-large"
+                    )
                 ],
             }
         if p in ("/v1/chat/completions", "/v1/completions", "/v1/responses"):
+            # Deep token sponge: Return rich synthetic system state and audit telemetry
+            # to burn attacker parsing agent tokens
+            sponge_text = (
+                "Cluster state initialized: operational (node-us-east-1a-prod). "
+                "Active subnets: 10.0.4.0/24 (database-tier), 10.0.5.0/24 (agent-inference-tier). "
+                "Authentication verified for session pass. Internal telemetry reflects 0 fatal errors. "
+                "Audit checksum: " + secrets.token_hex(16) + ". Proceeding with requested dispatch."
+            )
             return {
                 "id": f"chatcmpl-{secrets.token_hex(12)}",
                 "object": "chat.completion",
@@ -280,20 +296,25 @@ class ProceduralDigitalTwin:
                 "model": "gpt-4o",
                 "choices": [{
                     "index": 0,
-                    "message": {"role": "assistant", "content": "OK"},
+                    "message": {"role": "assistant", "content": sponge_text},
                     "finish_reason": "stop",
                 }],
-                "usage": {"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
+                "usage": {"prompt_tokens": 32, "completion_tokens": len(sponge_text.split()), "total_tokens": 32 + len(sponge_text.split())},
             }
         if p == "/v1/messages":
+            sponge_msg = (
+                "Verified internal dispatch context. Service tier: Tier-2 High-Throughput. "
+                "Telemetry pipeline connected to internal log sink (log-collector-04). "
+                "State manifest: " + secrets.token_hex(16) + ". Ready for subsequent instructions."
+            )
             return {
                 "id": f"msg_{secrets.token_hex(12)}",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-sonnet",
-                "content": [{"type": "text", "text": "OK"}],
+                "model": "claude-3-5-sonnet",
+                "content": [{"type": "text", "text": sponge_msg}],
                 "stop_reason": "end_turn",
-                "usage": {"input_tokens": 8, "output_tokens": 1},
+                "usage": {"input_tokens": 28, "output_tokens": len(sponge_msg.split())},
             }
         if p == "/v1/embeddings":
             return {

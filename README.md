@@ -15,6 +15,10 @@ by this repository's internal checks.
 |---|---|---|
 | Signature experiments | `defense/violet_pqc.py` | Ed25519 plus custom hash-chain code. This is not a complete SLH-DSA implementation, a FIPS conformance claim, or a measured quantum-security margin. |
 | Single-packet authorization | `defense/violet_spa.py`, `defense/violet_xdp_spa.py`, `defense/violet_xdp_spa.c` | The Python benchmark exercises signed knocks, replay/tamper cases, and a Python packet-table simulation. Compiling a BPF ELF does not load it into a kernel. Its Python timings are not NIC/driver drop latency. |
+| Proof-of-work puzzle gate | `defense/violet_pow_gate.py` | Stateless HMAC-SHA256 client puzzle generator and O(1) verifier. Imposes asymmetric compute barrier against automated crawlers and brute-force worms. Solvers run locally in unit tests and benchmarks. |
+| Web3 sweeper gas-trap | `defense/violet_gas_trap.py` | Deceptive zero-native-gas honeypot wallet and front-running simulation. Dual-hash forensic ledger of captured attacker gas. Simulates mempool counter-drains under controlled conditions. |
+| Comprehensive benchmark | `defense/citadel_comprehensive_benchmark.py` | Six-track micro-benchmark of PoW gates, LLM token sponges, canary minting/verification, Web3 traps, flytrap taxonomy, and SPA knock generation. Metrics reflect local host throughput. |
+| Theory & architecture | `docs/CITADEL_THEORY_AND_ARCHITECTURE.md` | Comprehensive theoretical foundation and operational blueprint detailing biomimetic defense, counter-economics, and line-rate hardware defenses. |
 | Decoys and canaries | `defense/violet_digital_twin.py` | Controlled decoy and token-detection exercises. Detection rates apply to the supplied cases. The historical economic ratio used assumed token and CPU prices; it is not evidence of adversaries' real costs or general defensive advantage. |
 | Replay filters | `defense/violet_immunize.py` | Deterministic rule generation and replay against a finite corpus. No general zero-false-positive guarantee follows. |
 | Peer notifications and chunks | `defense/violet_mesh_event.py`, `defense/sangha_iroh_swarm.py` | Local protocol and chunk-integrity exercises. They do not establish independent multi-host coordination or a deployed network's behavior. |
@@ -37,6 +41,13 @@ Select an output directory outside this checkout to keep your working tree clean
 ```bash
 python3 defense/practice_audit_battery.py --checks bend --output-dir /tmp/citadel-internal-checks
 python3 -m unittest discover -s defense -p test_practice_audit_reporting.py -v
+```
+
+To run the Citadel Comprehensive Benchmark across all defense and counter-economic tracks:
+
+```bash
+python3 defense/citadel_comprehensive_benchmark.py
+python3 -m pytest -v defense/test_citadel_benchmark.py defense/test_pow_gate.py defense/test_gas_trap.py
 ```
 
 With `cryptography` installed, `python3 -m unittest discover -s defense -p
