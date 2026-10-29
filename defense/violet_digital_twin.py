@@ -480,7 +480,7 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._handle_canary_tripwire(client_ip, path, canary_hit)
             extra_headers["X-Citadel-Canary-Tripwire"] = "TRIGGERED"
 
-        # 0. Public Defense Summary for Dashboard (Read-only status)
+        # 0. Public Defense Summary & Morning Briefing for Dashboard (Read-only status)
         if path in ("/api/defense/summary", "/defense/summary.json"):
             extra_headers["Access-Control-Allow-Origin"] = "*"
             sum_file = STATE_DIR / "bounty_summary.json"
@@ -496,6 +496,19 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
                 json.dumps({"status": "ok", "total_counter_economic_value_usd": 0.0}),
                 extra_headers
             )
+            return
+
+        if path in ("/api/defense/briefing", "/defense/briefing.md"):
+            extra_headers["Access-Control-Allow-Origin"] = "*"
+            brief_file = STATE_DIR / "morning_briefing.md"
+            if brief_file.exists():
+                try:
+                    md_text = brief_file.read_text(encoding="utf-8")
+                    self._send_response(200, "text/markdown; charset=utf-8", md_text, extra_headers)
+                    return
+                except Exception:
+                    pass
+            self._send_response(200, "text/plain", "# Citadel Defense Briefing\nBriefing not yet generated.\n", extra_headers)
             return
 
         # 1. AWS IMDS Simulation (IMDSv1 / IMDSv2)
