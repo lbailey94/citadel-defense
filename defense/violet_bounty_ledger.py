@@ -49,6 +49,9 @@ DEFAULT_ETH_PRICE_USD = float(os.environ.get("CITADEL_ETH_PRICE_USD", "2500.00")
 DEFAULT_LLM_INPUT_COST_PER_M = float(os.environ.get("CITADEL_LLM_INPUT_COST_M", "3.00"))
 DEFAULT_LLM_OUTPUT_COST_PER_M = float(os.environ.get("CITADEL_LLM_OUTPUT_COST_M", "15.00"))
 DEFAULT_CPU_HOUR_COST_USD = float(os.environ.get("CITADEL_CPU_HOUR_COST_USD", "0.04"))  # ~$0.04/vCPU-hr
+DEFAULT_TREASURY_ADDRESS = os.environ.get(
+    "CITADEL_TREASURY_ADDRESS", "0x213b6bB4fB073E86167c58DA6Cb6E9477557DaA8"
+)
 
 
 class BountyCategory:
@@ -77,7 +80,7 @@ class BountyLedger:
         self,
         ledger_path: pathlib.Path | None = None,
         summary_path: pathlib.Path | None = None,
-        treasury_address: str = "0xCitadelDefenseTreasury888888888888888888",
+        treasury_address: str = DEFAULT_TREASURY_ADDRESS,
     ):
         if ledger_path is None:
             # Fallback for non-root local runs
@@ -210,6 +213,7 @@ class BountyLedger:
             fd, tmp = tempfile.mkstemp(prefix=".bounty_summary.", dir=str(self.summary_path.parent))
             with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
                 json.dump(clean, tmp_file, indent=2)
+            os.chmod(tmp, 0o644)
             os.replace(tmp, self.summary_path)
         except Exception:
             pass
