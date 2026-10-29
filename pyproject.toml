@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "citadel-shield"
+version = "3.0.0"
+authors = [
+  { name="Lucas Bailey & WhiteMagic Sangha", email="ops@whitemagic.dev" },
+]
+description = "Thermodynamic, negative-expected-value (-EV) active cyberdefense framework for modern web and decentralized infrastructure."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Security",
+    "Topic :: Internet :: Proxy Servers",
+]
+dependencies = [
+    "eth-account>=0.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/lbailey94/citadel-defense"
+"Whitepaper" = "https://github.com/lbailey94/citadel-defense/blob/main/docs/CITADEL_THEORY_AND_ARCHITECTURE.md"
+"Live Telemetry" = "https://mcp.whitemagic.dev/defense"
