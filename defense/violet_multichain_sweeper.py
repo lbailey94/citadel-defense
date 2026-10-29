@@ -463,8 +463,20 @@ class MultiChainSweeperDaemon:
         logger.info(" Tron Bait Address  : %s", self.tron.address)
         logger.info("═" * 70)
 
+        last_heartbeat = 0.0
         while True:
             try:
+                now = time.time()
+                if now - last_heartbeat >= 60.0:
+                    sol_bal = self.solana.get_balance() / 1e9
+                    tron_bal = self.tron.get_balance() / 1e6
+                    logger.info(
+                        "Heartbeat: Solana (%s SOL: %s), Tron (%s TRX: %s) armed & waiting",
+                        sol_bal, self.solana.address[:8] + "...",
+                        tron_bal, self.tron.address[:8] + "...",
+                    )
+                    last_heartbeat = now
+
                 self.poll_cycle()
                 time.sleep(poll_interval)
             except KeyboardInterrupt:
