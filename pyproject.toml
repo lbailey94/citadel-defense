@@ -32,3 +32,7 @@ dev = [
 "Homepage" = "https://github.com/lbailey94/citadel-defense"
 "Whitepaper" = "https://github.com/lbailey94/citadel-defense/blob/main/docs/CITADEL_THEORY_AND_ARCHITECTURE.md"
 "Live Telemetry" = "https://mcp.whitemagic.dev/defense"
+
+[tool.pytest.ini_options]
+pythonpath = [".", "defense"]
+

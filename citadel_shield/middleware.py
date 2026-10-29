@@ -70,7 +70,7 @@ class CitadelShieldMiddleware:
 
         if self.enable_pow_gate:
             try:
-                self.pow_gate = vpg.PoWGate(difficulty=self.pow_difficulty)
+                self.pow_gate = vpg.PoWGate()
             except Exception as e:
                 logger.warning("Could not initialize PoWGate: %s", e)
 
@@ -107,7 +107,8 @@ class CitadelShieldMiddleware:
             headers = dict(scope.get("headers", []))
             solution_hdr = headers.get(b"x-citadel-pow-solution", b"").decode("utf-8")
             if not solution_hdr:
-                challenge = self.pow_gate.generate_challenge(src_ip=scope.get("client", ("0", 0))[0])
+                client_ip = scope.get("client", ("127.0.0.1", 0))[0]
+                challenge = self.pow_gate.generate_challenge(client_ip=client_ip, difficulty=self.pow_difficulty)
                 body = json.dumps({
                     "error": "PoW challenge required",
                     "challenge": challenge,
