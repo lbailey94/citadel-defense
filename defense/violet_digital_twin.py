@@ -47,6 +47,12 @@ try:
 except Exception:
     HAS_MESH = False
 
+try:
+    import violet_bounty_ledger as vbl
+    HAS_BOUNTY_LEDGER = True
+except Exception:
+    HAS_BOUNTY_LEDGER = False
+
 STATE_DIR = Path(os.environ.get("VIOLET_STATE_DIR", os.path.expanduser("~/.local/state/whitemagic")))
 BLUE_OPS_CHAIN = STATE_DIR / "vps-sentinel.chain.jsonl"
 
@@ -54,13 +60,14 @@ BLUE_OPS_CHAIN = STATE_DIR / "vps-sentinel.chain.jsonl"
 class ProceduralDigitalTwin:
     """Procedurally generates realistic, high-entropy infrastructure state and stateless honeytokens."""
 
-    def __init__(self, canary_mgr: CanaryManager | None = None):
+    def __init__(self, canary_mgr: CanaryManager | None = None, bounty_ledger: Any | None = None):
         self.canary_mgr = canary_mgr or CanaryManager()
         self.node_id = f"i-{secrets.token_hex(8)}"
         self.region = "us-east-1"
         self.zone = "us-east-1a"
         self.cluster_name = "whitemagic-citadel-prod-01"
         self.mesh_broadcaster = MeshHerdImmunity() if HAS_MESH else None
+        self.bounty_ledger = bounty_ledger
 
     # --- AWS IMDS Decoys (169.254.169.254) ---
 
@@ -265,7 +272,8 @@ class ProceduralDigitalTwin:
         ]
         return "\n".join(lines) + "\n"
 
-    def provider_decoy(self, path: str, method: str = "GET", prompt_text: str | None = None) -> dict | None:
+    def provider_decoy(self, path: str, method: str = "GET", prompt_text: str | None = None,
+                       src_ip: str | None = None) -> dict | None:
         """Plausible LLM provider API responses acting as a deep token sponge against scanning agents."""
         p = path.rstrip("/")
         now = int(time.time())
@@ -289,6 +297,18 @@ class ProceduralDigitalTwin:
                 "Authentication verified for session pass. Internal telemetry reflects 0 fatal errors. "
                 "Audit checksum: " + secrets.token_hex(16) + ". Proceeding with requested dispatch."
             )
+            out_toks = len(sponge_text.split())
+            if self.bounty_ledger is not None:
+                try:
+                    self.bounty_ledger.record_token_sponge(
+                        endpoint=p,
+                        completion_tokens=out_toks,
+                        prompt_tokens=32,
+                        model="gpt-4o",
+                        source_ip=src_ip or "unknown",
+                    )
+                except Exception:
+                    pass
             return {
                 "id": f"chatcmpl-{secrets.token_hex(12)}",
                 "object": "chat.completion",
@@ -299,7 +319,7 @@ class ProceduralDigitalTwin:
                     "message": {"role": "assistant", "content": sponge_text},
                     "finish_reason": "stop",
                 }],
-                "usage": {"prompt_tokens": 32, "completion_tokens": len(sponge_text.split()), "total_tokens": 32 + len(sponge_text.split())},
+                "usage": {"prompt_tokens": 32, "completion_tokens": out_toks, "total_tokens": 32 + out_toks},
             }
         if p == "/v1/messages":
             sponge_msg = (
@@ -307,6 +327,18 @@ class ProceduralDigitalTwin:
                 "Telemetry pipeline connected to internal log sink (log-collector-04). "
                 "State manifest: " + secrets.token_hex(16) + ". Ready for subsequent instructions."
             )
+            out_toks = len(sponge_msg.split())
+            if self.bounty_ledger is not None:
+                try:
+                    self.bounty_ledger.record_token_sponge(
+                        endpoint=p,
+                        completion_tokens=out_toks,
+                        prompt_tokens=28,
+                        model="claude-3-5-sonnet",
+                        source_ip=src_ip or "unknown",
+                    )
+                except Exception:
+                    pass
             return {
                 "id": f"msg_{secrets.token_hex(12)}",
                 "type": "message",
@@ -314,7 +346,7 @@ class ProceduralDigitalTwin:
                 "model": "claude-3-5-sonnet",
                 "content": [{"type": "text", "text": sponge_msg}],
                 "stop_reason": "end_turn",
-                "usage": {"input_tokens": 28, "output_tokens": len(sponge_msg.split())},
+                "usage": {"input_tokens": 28, "output_tokens": out_toks},
             }
         if p == "/v1/embeddings":
             return {
@@ -446,7 +478,7 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         # 4c. LLM provider-API decoys: validators replaying harvested keys against a
         # *_BASE_URL we published in the bait land here (canary check already ran above).
-        provider = self.twin.provider_decoy(path, self.command)
+        provider = self.twin.provider_decoy(path, self.command, src_ip=client_ip)
         if provider is not None:
             self._send_response(200, "application/json", json.dumps(provider), extra_headers)
             return

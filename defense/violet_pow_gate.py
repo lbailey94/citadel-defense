@@ -19,6 +19,13 @@ import json
 import secrets
 import time
 from pathlib import Path
+from typing import Any
+
+try:
+    import violet_bounty_ledger as vbl
+    HAS_BOUNTY_LEDGER = True
+except Exception:
+    HAS_BOUNTY_LEDGER = False
 
 
 DEFAULT_SECRET_PATH = Path("/var/lib/whitemagic-hosted/defense/pow_gate.secret")
@@ -38,9 +45,11 @@ def _load_or_create_secret(secret_path: Path = DEFAULT_SECRET_PATH) -> bytes:
 
 
 class PoWGate:
-    def __init__(self, secret: bytes | None = None, ttl_seconds: int = DEFAULT_CHALLENGE_TTL):
+    def __init__(self, secret: bytes | None = None, ttl_seconds: int = DEFAULT_CHALLENGE_TTL,
+                 bounty_ledger: Any | None = None):
         self.secret = secret or _load_or_create_secret()
         self.ttl = ttl_seconds
+        self.bounty_ledger = bounty_ledger
 
     def _sign(self, payload: str) -> str:
         return hmac.new(self.secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -100,6 +109,17 @@ class PoWGate:
         h = hashlib.sha256(preimage).hexdigest()
         if not h.startswith(prefix):
             return False, "insufficient_proof_of_work"
+
+        if self.bounty_ledger is not None:
+            try:
+                estimated_iters = 16 ** difficulty
+                self.bounty_ledger.record_pow_tax(
+                    difficulty=difficulty,
+                    iterations=estimated_iters,
+                    source_ip=client_ip,
+                )
+            except Exception:
+                pass
 
         return True, "verified"
 

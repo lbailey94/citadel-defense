@@ -20,13 +20,21 @@ import secrets
 import time
 from pathlib import Path
 
+try:
+    import violet_bounty_ledger as vbl
+    HAS_BOUNTY_LEDGER = True
+except Exception:
+    HAS_BOUNTY_LEDGER = False
+
 
 class GasTrapHoneypot:
-    def __init__(self, treasury_address: str = "0xCitadelDefenseTreasury888888888888888888"):
+    def __init__(self, treasury_address: str = "0xCitadelDefenseTreasury888888888888888888",
+                 bounty_ledger: Any | None = None):
         self.treasury_address = treasury_address
         self.active_traps: dict[str, dict] = {}
         self.captured_revenue_wei: int = 0
         self.forensic_ledger: list[dict] = []
+        self.bounty_ledger = bounty_ledger
 
     def deploy_trap(self, label: str = "mainnet_liquidity_reserve", token_symbol: str = "USDC",
                     token_balance: float = 5000.0) -> dict:
@@ -100,6 +108,19 @@ class GasTrapHoneypot:
         sha384 = hashlib.sha384(dual_hash_preimage.encode("utf-8")).hexdigest()
         blake2 = hashlib.blake2b(dual_hash_preimage.encode("utf-8"), digest_size=64).hexdigest()
         entry_hash = hashlib.sha256((sha384 + blake2).encode("utf-8")).hexdigest()
+
+        if self.bounty_ledger is not None:
+            try:
+                self.bounty_ledger.record_crypto_sweep(
+                    trap_address=address,
+                    attacker_address=attacker_address,
+                    deposit_wei=gas_deposit_wei,
+                    swept_wei=net_sweep_wei,
+                    priority_fee_wei=miner_fee_wei,
+                    tx_hash=counter_sweep_tx["tx_hash"],
+                )
+            except Exception:
+                pass
 
         receipt = {
             "trap_address": address,

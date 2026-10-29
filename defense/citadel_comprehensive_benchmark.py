@@ -26,10 +26,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Resolve defense directory
+# Resolve defense directory and system script locations
 CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
+for extra_path in (CURRENT_DIR, Path("/usr/local/bin")):
+    if str(extra_path) not in sys.path:
+        sys.path.insert(0, str(extra_path))
 
 import violet_pow_gate as pow_gate
 import violet_digital_twin as dt
