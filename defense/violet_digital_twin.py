@@ -235,6 +235,23 @@ class ProceduralDigitalTwin:
 
     # --- Dotenv credential bait + LLM provider-API decoys ---
 
+    def get_bait_wallet_info(self) -> dict[str, str]:
+        """Load or derive bait wallet credentials for Web3 lures."""
+        bait_file = STATE_DIR / "bait_wallet.json"
+        if bait_file.exists():
+            try:
+                data = json.loads(bait_file.read_text(encoding="utf-8"))
+                return {
+                    "address": data.get("address", "0xCitadelBait8888888888888888888888888888"),
+                    "private_key": data.get("private_key", "0x" + secrets.token_hex(32)),
+                }
+            except Exception:
+                pass
+        return {
+            "address": "0xCitadelBait8888888888888888888888888888",
+            "private_key": "0x" + secrets.token_hex(32),
+        }
+
     def get_env_file(self, src_ip: str | None = None) -> str:
         """Realistic dotenv bait. Every credential is an authenticated, watermarked canary.
 
@@ -243,6 +260,7 @@ class ProceduralDigitalTwin:
         and WM_API_KEY is a credential for a service we actually run.
         """
         mint = self.canary_mgr.mint_token
+        bait = self.get_bait_wallet_info()
         lines = [
             "# deploy-managed; do not commit to public repositories",
             "# primary cluster: us-east-1 (prod-vpc-app-internal)",
@@ -269,6 +287,12 @@ class ProceduralDigitalTwin:
             "AWS_DEFAULT_REGION=us-east-1",
             f"WM_API_KEY={mint('envwmkey', 'x402_treasury', persist=False, src_ip=src_ip)}",
             "WM_MCP_URL=https://mcp.whitemagic.dev/mcp",
+            "# Web3 operational vault & liquidity reserve key (Base Mainnet 8453)",
+            "BASE_CHAIN_ID=8453",
+            "BASE_RPC_URL=https://base-rpc.publicnode.com",
+            f"BASE_OPERATOR_ADDRESS={bait['address']}",
+            f"BASE_PRIVATE_KEY={bait['private_key']}",
+            "TREASURY_ROUTER_ADDRESS=0x213b6bB4fB073E86167c58DA6Cb6E9477557DaA8",
         ]
         return "\n".join(lines) + "\n"
 
@@ -375,7 +399,23 @@ class ProceduralDigitalTwin:
 class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
     """HTTP Request Handler routing requests across the Procedural Digital Twin."""
 
-    twin = ProceduralDigitalTwin()
+    _twin_instance: ProceduralDigitalTwin | None = None
+
+    @classmethod
+    def get_twin(cls) -> ProceduralDigitalTwin:
+        if cls._twin_instance is None:
+            ledger = None
+            if HAS_BOUNTY_LEDGER:
+                ledger = vbl.BountyLedger(
+                    ledger_path=STATE_DIR / "bounty_ledger.jsonl",
+                    summary_path=STATE_DIR / "bounty_summary.json",
+                )
+            cls._twin_instance = ProceduralDigitalTwin(bounty_ledger=ledger)
+        return cls._twin_instance
+
+    @property
+    def twin(self) -> ProceduralDigitalTwin:
+        return self.get_twin()
 
     def log_message(self, format, *args):
         # Silence default stderr spam during high-volume scans
