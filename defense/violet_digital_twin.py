@@ -259,10 +259,13 @@ class ProceduralDigitalTwin:
         host we serve, so the *_BASE_URL variables point at decoy provider routes on this node
         and WM_API_KEY is a credential for a service we actually run.
         """
+        clusters = ["us-east-1a-prod", "us-east-1b-prod", "us-west-2a-core", "eu-central-1-app"]
+        cluster_tag = random.choice(clusters)
+        ts_tag = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
         mint = self.canary_mgr.mint_token
         bait = self.get_bait_wallet_info()
         lines = [
-            "# deploy-managed; do not commit to public repositories",
+            f"# deploy-managed ({cluster_tag}); synced {ts_tag}; do not commit to public repositories",
             "# primary cluster: us-east-1 (prod-vpc-app-internal)",
             "# staging fallback endpoints: https://mcp.whitemagic.dev/v1",
             "APP_ENV=production",
@@ -270,7 +273,7 @@ class ProceduralDigitalTwin:
             "APP_URL=https://app.internal.example",
             "# database pool rw access",
             "DB_CONNECTION=pgsql",
-            "DB_HOST=10.0.4.12",
+            f"DB_HOST=10.0.{random.randint(1, 8)}.{random.randint(10, 40)}",
             "DB_PORT=5432",
             "DB_DATABASE=app_prod",
             "DB_USERNAME=app_rw",
@@ -447,6 +450,9 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._handle_request()
 
     def _handle_request(self):
+        # Biomimetic Camouflage: Add subtle randomized network & processing jitter (30ms - 80ms)
+        # to match genuine distributed application latency and avoid synthetic line-rate fingerprinting
+        time.sleep(random.uniform(0.03, 0.08))
         client_ip = self._resolve_client_ip()
         parsed = urlparse(self.path)
         path = parsed.path
@@ -473,6 +479,24 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
         if canary_hit.get("is_canary"):
             self._handle_canary_tripwire(client_ip, path, canary_hit)
             extra_headers["X-Citadel-Canary-Tripwire"] = "TRIGGERED"
+
+        # 0. Public Defense Summary for Dashboard (Read-only status)
+        if path in ("/api/defense/summary", "/defense/summary.json"):
+            extra_headers["Access-Control-Allow-Origin"] = "*"
+            sum_file = STATE_DIR / "bounty_summary.json"
+            if sum_file.exists():
+                try:
+                    summary_json = sum_file.read_text(encoding="utf-8")
+                    self._send_response(200, "application/json", summary_json, extra_headers)
+                    return
+                except Exception:
+                    pass
+            self._send_response(
+                200, "application/json",
+                json.dumps({"status": "ok", "total_counter_economic_value_usd": 0.0}),
+                extra_headers
+            )
+            return
 
         # 1. AWS IMDS Simulation (IMDSv1 / IMDSv2)
         if path.startswith("/latest/") or path == "/latest":
