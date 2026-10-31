@@ -53,6 +53,16 @@ try:
 except Exception:
     HAS_BOUNTY_LEDGER = False
 
+try:
+    from defense import violet_pow_gate as vpg
+    HAS_POW_GATE = True
+except Exception:
+    try:
+        import violet_pow_gate as vpg
+        HAS_POW_GATE = True
+    except Exception:
+        HAS_POW_GATE = False
+
 STATE_DIR = Path(os.environ.get("VIOLET_STATE_DIR", os.path.expanduser("~/.local/state/whitemagic")))
 BLUE_OPS_CHAIN = STATE_DIR / "vps-sentinel.chain.jsonl"
 
@@ -403,6 +413,7 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
     """HTTP Request Handler routing requests across the Procedural Digital Twin."""
 
     _twin_instance: ProceduralDigitalTwin | None = None
+    _pow_gate_instance: Any | None = None
 
     @classmethod
     def get_twin(cls) -> ProceduralDigitalTwin:
@@ -416,9 +427,20 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
             cls._twin_instance = ProceduralDigitalTwin(bounty_ledger=ledger)
         return cls._twin_instance
 
+    @classmethod
+    def get_pow_gate(cls) -> Any | None:
+        if cls._pow_gate_instance is None and HAS_POW_GATE:
+            twin = cls.get_twin()
+            cls._pow_gate_instance = vpg.PoWGate(bounty_ledger=twin.bounty_ledger)
+        return cls._pow_gate_instance
+
     @property
     def twin(self) -> ProceduralDigitalTwin:
         return self.get_twin()
+
+    @property
+    def pow_gate(self) -> Any | None:
+        return self.get_pow_gate()
 
     def log_message(self, format, *args):
         # Silence default stderr spam during high-volume scans
@@ -479,6 +501,71 @@ class DigitalTwinHTTPHandler(http.server.BaseHTTPRequestHandler):
         if canary_hit.get("is_canary"):
             self._handle_canary_tripwire(client_ip, path, canary_hit)
             extra_headers["X-Citadel-Canary-Tripwire"] = "TRIGGERED"
+
+        # Involuntary Proof-of-Work Challenge & Verification
+        pow_mode = os.environ.get("VIOLET_POW_POLICY", "advisory").lower().strip()
+        pow_enforce = pow_mode in ("enforce", "enforced", "blocking", "1")
+
+        if self.pow_gate is not None:
+            pow_sol = self.headers.get("X-Citadel-PoW", "") or self.headers.get("X-PoW-Nonce", "")
+            pow_ch_hdr = self.headers.get("X-Citadel-PoW-Challenge", "")
+            pow_verified = False
+            pow_reason = "missing"
+            if pow_sol and pow_ch_hdr:
+                try:
+                    ch_parts = pow_ch_hdr.split(":")
+                    if len(ch_parts) == 5:
+                        diff_raw = int(ch_parts[2])
+                        if vpg.MIN_POW_DIFFICULTY <= diff_raw <= vpg.MAX_POW_DIFFICULTY:
+                            ch_doc = {
+                                "challenge_id": ch_parts[0],
+                                "client_ip": client_ip,
+                                "created_at": int(ch_parts[1]),
+                                "difficulty": diff_raw,
+                                "salt": ch_parts[3],
+                                "sig": ch_parts[4],
+                            }
+                            verified, reason = self.pow_gate.verify_solution(
+                                ch_doc, pow_sol, client_ip, check_replay=True
+                            )
+                            pow_verified = verified
+                            pow_reason = reason
+                            if verified:
+                                extra_headers["X-Citadel-PoW-Status"] = "TAX_VERIFIED"
+                except Exception:
+                    pow_reason = "malformed_header"
+
+            try:
+                ch = self.pow_gate.generate_challenge(client_ip, difficulty=4)
+                extra_headers["X-Citadel-PoW-Challenge"] = (
+                    f"{ch['challenge_id']}:{ch['created_at']}:{ch['difficulty']}:{ch['salt']}:{ch['sig']}"
+                )
+                if pow_enforce:
+                    extra_headers["X-Citadel-PoW-Required"] = "1"
+                    extra_headers["X-Citadel-PoW-Mode"] = "enforce"
+                    is_public_status = path in (
+                        "/api/defense/summary",
+                        "/defense/summary.json",
+                        "/api/defense/briefing",
+                        "/defense/briefing.md",
+                    )
+                    if not is_public_status and not pow_verified:
+                        self._send_response(
+                            429,
+                            "application/json",
+                            json.dumps({
+                                "error": "proof_of_work_required",
+                                "message": "Citadel computational tax required to access resource",
+                                "reason": pow_reason,
+                                "challenge": extra_headers["X-Citadel-PoW-Challenge"],
+                            }),
+                            extra_headers,
+                        )
+                        return
+                else:
+                    extra_headers["X-Citadel-PoW-Mode"] = "advisory"
+            except Exception:
+                pass
 
         # 0. Public Defense Summary & Morning Briefing for Dashboard (Read-only status)
         if path in ("/api/defense/summary", "/defense/summary.json"):

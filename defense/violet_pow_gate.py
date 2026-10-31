@@ -6,8 +6,8 @@ and rogue swarms.
 Mathematical Invariant:
   - Defender verification cost: O(1) single SHA-256 computation (< 5 microseconds).
   - Attacker puzzle solving cost: O(2^difficulty) iterative hash computations (100ms to 30s+ CPU).
-  - Stateless: Server does not store issued challenges in memory or disk. The challenge is
-    bound to the client IP and timestamp with a keyed HMAC-SHA256 signature.
+  - Stateless challenge issuance: Bound to client IP and timestamp with a keyed HMAC-SHA256 signature.
+  - Replay-safe accounting: Bounded TTL cache prevents double-crediting computational tax or reusing solutions.
 
 Lineage: Edgerunner Violet Counter-Economics & Active Tarpitting.
 """
@@ -16,23 +16,34 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 try:
-    import violet_bounty_ledger as vbl
+    from defense import violet_bounty_ledger as vbl
     HAS_BOUNTY_LEDGER = True
 except Exception:
-    HAS_BOUNTY_LEDGER = False
+    try:
+        import violet_bounty_ledger as vbl
+        HAS_BOUNTY_LEDGER = True
+    except Exception:
+        HAS_BOUNTY_LEDGER = False
 
 
 DEFAULT_SECRET_PATH = Path("/var/lib/whitemagic-hosted/defense/pow_gate.secret")
 DEFAULT_CHALLENGE_TTL = 120  # 2 minutes
+MIN_POW_DIFFICULTY = 1
+MAX_POW_DIFFICULTY = 8
+MAX_REPLAY_CACHE_SIZE = 16384
 
 
-def _load_or_create_secret(secret_path: Path = DEFAULT_SECRET_PATH) -> bytes:
+def _load_or_create_secret(secret_path: Path = DEFAULT_SECRET_PATH, fail_closed: bool | None = None) -> bytes:
+    if fail_closed is None:
+        fail_closed = os.environ.get("VIOLET_POW_FAIL_CLOSED", "").lower() in ("1", "true", "yes")
     try:
         if secret_path.exists():
             data = secret_path.read_bytes().strip()
@@ -40,19 +51,40 @@ def _load_or_create_secret(secret_path: Path = DEFAULT_SECRET_PATH) -> bytes:
                 return data
     except Exception:
         pass
-    # Ephemeral memory secret fallback
-    return hashlib.sha256(b"citadel-pow-fallback-secret-seed").digest()
+    if fail_closed:
+        raise RuntimeError(f"Configured PoW secret is missing or unreadable at {secret_path}")
+    # Ephemeral per-process cryptographic random key fallback (never a deterministic public constant!)
+    return secrets.token_bytes(32)
 
 
 class PoWGate:
-    def __init__(self, secret: bytes | None = None, ttl_seconds: int = DEFAULT_CHALLENGE_TTL,
-                 bounty_ledger: Any | None = None):
-        self.secret = secret or _load_or_create_secret()
+    def __init__(
+        self,
+        secret: bytes | None = None,
+        ttl_seconds: int = DEFAULT_CHALLENGE_TTL,
+        bounty_ledger: Any | None = None,
+        fail_closed: bool | None = None,
+    ):
+        self.secret = secret if secret is not None else _load_or_create_secret(fail_closed=fail_closed)
         self.ttl = ttl_seconds
         self.bounty_ledger = bounty_ledger
+        self._consumed_lock = threading.Lock()
+        # Maps replay_token -> expiration_timestamp
+        self._consumed_challenges: dict[str, int] = {}
 
     def _sign(self, payload: str) -> str:
         return hmac.new(self.secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def _prune_consumed_cache(self, now: int) -> None:
+        # Caller must hold self._consumed_lock
+        expired = [token for token, exp in self._consumed_challenges.items() if exp <= now]
+        for token in expired:
+            self._consumed_challenges.pop(token, None)
+        if len(self._consumed_challenges) > MAX_REPLAY_CACHE_SIZE:
+            excess = len(self._consumed_challenges) - MAX_REPLAY_CACHE_SIZE
+            oldest = sorted(self._consumed_challenges.items(), key=lambda x: x[1])[:excess]
+            for token, _ in oldest:
+                self._consumed_challenges.pop(token, None)
 
     def generate_challenge(self, client_ip: str, difficulty: int = 4, now: int | None = None) -> dict:
         """Mint a stateless cryptographic client puzzle.
@@ -63,6 +95,8 @@ class PoWGate:
           - difficulty 5: ~1,048,576 hashes (~1-4 s)  - heavy brute-force throttle
           - difficulty 6: ~16,777,216 hashes (~15-60 s) - aggressive swarm freeze
         """
+        if difficulty < MIN_POW_DIFFICULTY or difficulty > MAX_POW_DIFFICULTY:
+            raise ValueError(f"difficulty {difficulty} out of bounds [{MIN_POW_DIFFICULTY}, {MAX_POW_DIFFICULTY}]")
         now = int(time.time() if now is None else now)
         cid = secrets.token_hex(8)
         salt = secrets.token_hex(16)
@@ -81,15 +115,39 @@ class PoWGate:
             "algorithm": "sha256(salt + nonce) with leading prefix",
         }
 
-    def verify_solution(self, challenge: dict, nonce: str, client_ip: str) -> tuple[bool, str]:
-        """Stateless O(1) verification of the client's submitted solution."""
+    def verify_solution(
+        self,
+        challenge: dict,
+        nonce: str,
+        client_ip: str,
+        record_tax: bool = True,
+        check_replay: bool = False,
+    ) -> tuple[bool, str]:
+        """Stateless O(1) verification of the client's submitted solution.
+        
+        Validates difficulty bounds, timestamp TTL, IP binding, and HMAC signature
+        BEFORE allocating the prefix string or computing hashes.
+        
+        If check_replay is True, verifies that the challenge/nonce has not been
+        previously consumed. Even if check_replay is False, tax accounting is
+        strictly deduplicated so replayed solutions never double-credit work tax.
+        """
         now = int(time.time())
-        cid = challenge.get("challenge_id", "")
-        created_at = int(challenge.get("created_at", 0))
-        difficulty = int(challenge.get("difficulty", 0))
-        salt = challenge.get("salt", "")
-        sig = challenge.get("sig", "")
-        prefix = "0" * difficulty
+        cid = str(challenge.get("challenge_id", "")).strip()
+        salt = str(challenge.get("salt", "")).strip()
+        sig = str(challenge.get("sig", "")).strip()
+
+        try:
+            created_at = int(challenge.get("created_at", 0))
+            difficulty = int(challenge.get("difficulty", 0))
+        except (ValueError, TypeError):
+            return False, "invalid_numeric_fields"
+
+        # 0. Numeric bounds validation (O(1), before memory allocation or hashing)
+        if difficulty < MIN_POW_DIFFICULTY or difficulty > MAX_POW_DIFFICULTY:
+            return False, "difficulty_out_of_bounds"
+        if not cid or not salt or not sig:
+            return False, "malformed_challenge"
 
         # 1. TTL Check
         if now - created_at > self.ttl:
@@ -104,22 +162,36 @@ class PoWGate:
         if not hmac.compare_digest(sig, expected_sig):
             return False, "invalid_signature"
 
-        # 3. Work Verification (single SHA-256 computation)
+        # 3. Replay Check
+        replay_token = f"{sig}:{str(nonce).strip()}"
+        with self._consumed_lock:
+            self._prune_consumed_cache(now)
+            is_consumed = replay_token in self._consumed_challenges
+
+        if check_replay and is_consumed:
+            return False, "challenge_already_consumed"
+
+        # 4. Work Verification (single SHA-256 computation) - allocation only happens here after sig check
+        prefix = "0" * difficulty
         preimage = f"{salt}:{str(nonce).strip()}".encode("utf-8")
         h = hashlib.sha256(preimage).hexdigest()
         if not h.startswith(prefix):
             return False, "insufficient_proof_of_work"
 
-        if self.bounty_ledger is not None:
-            try:
-                estimated_iters = 16 ** difficulty
-                self.bounty_ledger.record_pow_tax(
-                    difficulty=difficulty,
-                    iterations=estimated_iters,
-                    source_ip=client_ip,
-                )
-            except Exception:
-                pass
+        # 5. Idempotent Accounting: credit tax and mark consumed on first valid verification
+        if not is_consumed:
+            with self._consumed_lock:
+                self._consumed_challenges[replay_token] = created_at + self.ttl + 30
+            if record_tax and self.bounty_ledger is not None:
+                try:
+                    estimated_iters = 16 ** difficulty
+                    self.bounty_ledger.record_pow_tax(
+                        difficulty=difficulty,
+                        iterations=estimated_iters,
+                        source_ip=client_ip,
+                    )
+                except Exception:
+                    pass
 
         return True, "verified"
 
