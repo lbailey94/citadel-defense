@@ -1,17 +1,16 @@
 """citadel_shield.middleware — Drop-in ASGI / FastAPI Middleware for Citadel Active Defense.
 
-Provides zero-configuration, line-rate active defense for any Python web application:
+Provides optional decoys and client puzzle admission for Python ASGI applications:
   * Intercepts hostile probe paths (/.env, /wp-admin, /latest/meta-data, /api/v1/namespaces)
   * Serves realistic procedural digital twin decoys with watermarked canaries
-  * Enforces client-side cryptographic Proof-of-Work puzzles under scan pressure
-  * Imposes negative expected value (-EV) on automated threat actors
+  * Requires verified, single-use PoW solutions on /api/heavy routes when enabled
 
 Usage:
     from fastapi import FastAPI
     from citadel_shield.middleware import CitadelShieldMiddleware
 
     app = FastAPI()
-    app.add_middleware(CitadelShieldMiddleware, enable_deception=True, pow_difficulty=16)
+    app.add_middleware(CitadelShieldMiddleware, enable_pow_gate=True, pow_difficulty=4)
 """
 from __future__ import annotations
 
@@ -27,10 +26,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "defense
 
 try:
     import violet_digital_twin as vdt
-    import violet_pow_gate as vpg
-    import violet_bounty_ledger as vbl
 except ImportError:
-    pass
+    vdt = None
+
+from defense import violet_pow_gate as vpg
 
 logger = logging.getLogger("citadel_shield")
 
@@ -39,6 +38,7 @@ DEFAULT_DECOY_PATHS = {
     "/computeMetadata/v1", "/wp-admin", "/wp-login.php", "/xmlrpc.php",
     "/api/v1/namespaces", "/v1.24/containers/json", "/aws/credentials"
 }
+MAX_POW_HEADER_BYTES = 4096
 
 
 class CitadelShieldMiddleware:
@@ -49,7 +49,7 @@ class CitadelShieldMiddleware:
         app: Callable,
         enable_deception: bool = True,
         enable_pow_gate: bool = False,
-        pow_difficulty: int = 16,
+        pow_difficulty: int = 4,
         decoy_paths: set[str] | None = None,
         state_dir: pathlib.Path | None = None,
     ):
@@ -69,10 +69,11 @@ class CitadelShieldMiddleware:
                 logger.warning("Could not initialize ProceduralDigitalTwin: %s", e)
 
         if self.enable_pow_gate:
-            try:
-                self.pow_gate = vpg.PoWGate()
-            except Exception as e:
-                logger.warning("Could not initialize PoWGate: %s", e)
+            if (type(pow_difficulty) is not int or
+                    not vpg.MIN_POW_DIFFICULTY <= pow_difficulty <= vpg.MAX_POW_DIFFICULTY):
+                raise ValueError("pow_difficulty must be an integer between 1 and 8")
+            # An explicitly enabled protection must not silently become passthrough.
+            self.pow_gate = vpg.PoWGate()
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] != "http":
@@ -80,7 +81,6 @@ class CitadelShieldMiddleware:
             return
 
         path = scope.get("path", "")
-        method = scope.get("method", "GET")
 
         # 1. Inspect for decoy paths
         if self.enable_deception and self.twin and (path in self.decoy_paths or path.startswith("/.env")):
@@ -102,17 +102,47 @@ class CitadelShieldMiddleware:
                 await self._send_response(send, 200, b"application/json", body)
                 return
 
-        # 2. Client PoW challenge under scan pressure
-        if self.enable_pow_gate and self.pow_gate and path.startswith("/api/heavy"):
-            headers = dict(scope.get("headers", []))
-            solution_hdr = headers.get(b"x-citadel-pow-solution", b"").decode("utf-8")
-            if not solution_hdr:
-                client_ip = scope.get("client", ("127.0.0.1", 0))[0]
+        # 2. Explicitly enabled PoW admission on the protected route prefix.
+        if self.enable_pow_gate and path.startswith("/api/heavy"):
+            client = scope.get("client")
+            if not client or not isinstance(client[0], str) or self.pow_gate is None:
+                await self._send_response(send, 503, b"application/json", b'{"error":"PoW gate unavailable"}')
+                return
+            # Use the ASGI transport peer. Forwarded headers require a trusted proxy
+            # configuration outside this middleware; client-controlled XFF is not identity.
+            client_ip = client[0]
+            submitted = [value for name, value in scope.get("headers", [])
+                         if name.lower() == b"x-citadel-pow-solution"]
+            verified, reason = False, "missing_solution"
+            if len(submitted) == 1:
+                if len(submitted[0]) > MAX_POW_HEADER_BYTES:
+                    reason = "solution_too_large"
+                else:
+                    try:
+                        solution = json.loads(submitted[0].decode("utf-8"))
+                        if not isinstance(solution, dict) or set(solution) != {"challenge", "nonce"}:
+                            raise ValueError("expected challenge and nonce")
+                        challenge, nonce = solution["challenge"], solution["nonce"]
+                        if not isinstance(challenge, dict) or type(challenge.get("difficulty")) is not int:
+                            raise ValueError("invalid challenge")
+                        if challenge["difficulty"] < self.pow_difficulty:
+                            reason = "difficulty_below_policy"
+                        else:
+                            verified, reason = self.pow_gate.verify_solution(
+                                challenge, nonce, client_ip, check_replay=True,
+                            )
+                    except (ValueError, TypeError, UnicodeError, RecursionError):
+                        reason = "malformed_solution"
+            elif submitted:
+                reason = "duplicate_solution_header"
+            if not verified:
                 challenge = self.pow_gate.generate_challenge(client_ip=client_ip, difficulty=self.pow_difficulty)
                 body = json.dumps({
                     "error": "PoW challenge required",
+                    "reason": reason,
                     "challenge": challenge,
-                    "header_required": "X-Citadel-PoW-Solution"
+                    "header_required": "X-Citadel-PoW-Solution",
+                    "solution_format": {"challenge": "the issued challenge object", "nonce": "solver nonce"},
                 }).encode("utf-8")
                 await self._send_response(send, 428, b"application/json", body)
                 return

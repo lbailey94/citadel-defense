@@ -15,7 +15,7 @@ by this repository's internal checks.
 |---|---|---|
 | Signature experiments | `defense/violet_pqc.py` | Ed25519 plus custom hash-chain code. This is not a complete SLH-DSA implementation, a FIPS conformance claim, or a measured quantum-security margin. |
 | Single-packet authorization | `defense/violet_spa.py`, `defense/violet_xdp_spa.py`, `defense/violet_xdp_spa.c` | The Python benchmark exercises signed knocks, replay/tamper cases, and a Python packet-table simulation. Compiling a BPF ELF does not load it into a kernel. Its Python timings are not NIC/driver drop latency. |
-| Proof-of-work puzzle gate | `defense/violet_pow_gate.py` | Stateless HMAC-SHA256 client puzzle generator and O(1) verifier. Imposes asymmetric compute barrier against automated crawlers and brute-force worms. Solvers run locally in unit tests and benchmarks. |
+| Proof-of-work puzzle gate | `defense/violet_pow_gate.py`, `citadel_shield/middleware.py` | HMAC-SHA256 challenge issuance, bounded solution verification and process-local single-use admission. Expected brute-force solving takes 16^difficulty hashes; this does not measure an operator's cost or establish general attack prevention. Solvers run locally in tests. |
 | Web3 sweeper gas-trap | `defense/violet_gas_trap.py` | Deceptive zero-native-gas honeypot wallet and front-running simulation. Dual-hash forensic ledger of captured attacker gas. Simulates mempool counter-drains under controlled conditions. |
 | Monetized lanes & bounty ledger | `defense/violet_bounty_ledger.py` | Tamper-evident dual-hash accounting ledger tracking on-chain gas sweeps, cognitive token burns, forced PoW hashes, and x402 revenue extracted from adversaries. |
 | Comprehensive benchmark | `defense/citadel_comprehensive_benchmark.py` | Six-track micro-benchmark of PoW gates, LLM token sponges, canary minting/verification, Web3 traps, flytrap taxonomy, and SPA knock generation. Metrics reflect local host throughput. |
@@ -85,6 +85,33 @@ outcomes. Manifests themselves are not counted as receipt fixtures.
 Agreement between three implementations maintained in the same project is
 useful consistency evidence; an independent oracle and source-to-binary build
 provenance still need separate evidence.
+
+## Optional ASGI proof-of-work admission
+
+Enable the gate explicitly with `CitadelShieldMiddleware(app, enable_pow_gate=True,
+pow_difficulty=4)`. Difficulty is an integer from 1 through 8, measured in leading
+hexadecimal zeros. The default is 4. Invalid settings or an enabled gate's
+initialization failure stop startup rather than enabling passthrough.
+
+Requests under `/api/heavy` receive HTTP 428 and a JSON `challenge`. Solve it with
+`PoWGate.solve(challenge)`, then send `X-Citadel-PoW-Solution` containing a JSON
+object `{"challenge": <the issued object>, "nonce": "<solver nonce>"}`. The
+middleware verifies the signature, transport-peer IP, lifetime, configured
+minimum difficulty and work before calling the application. The header is
+limited to 4096 bytes; duplicate, malformed and invalid solutions receive a new
+challenge. Each challenge admits one request, including when different valid
+nonces are submitted concurrently. Ledger work counts remain estimates rather
+than measured hashes performed by a client.
+
+Replay custody is in memory for one `PoWGate` instance and has a bounded cache.
+When full, it refuses new redemptions until entries expire; it does not evict
+live entries to make replay possible. This is not shared multiworker replay
+protection: workers using one signing secret require shared replay custody or
+challenge routing to the issuing instance. Ephemeral fallback secrets also do
+not survive process restarts. Proxy deployments must establish the trusted
+transport peer upstream; this admission path does not trust client-supplied
+`X-Forwarded-For`. No deployed service or outside attack resistance is qualified
+by these local ASGI and gate tests.
 
 ## Standalone launcher smoke
 

@@ -1,11 +1,11 @@
 """violet_pow_gate.py — Cryptographic Proof-of-Work (PoW) client puzzle gate for Citadel.
 
-Enforces severe computational cost asymmetry against automated scanners, brute-force worms,
-and rogue swarms.
+Issues client puzzles for opt-in request admission. A valid solution proves a
+hash met the target; it does not identify an attacker or measure their cost.
 
-Mathematical Invariant:
-  - Defender verification cost: O(1) single SHA-256 computation (< 5 microseconds).
-  - Attacker puzzle solving cost: O(2^difficulty) iterative hash computations (100ms to 30s+ CPU).
+Verification boundaries:
+  - Bounded input and one SHA-256 work check; replay bookkeeping is bounded by the cache cap.
+  - Expected brute-force solving cost: O(16^difficulty) hashes for hexadecimal-zero difficulty.
   - Stateless challenge issuance: Bound to client IP and timestamp with a keyed HMAC-SHA256 signature.
   - Replay-safe accounting: Bounded TTL cache prevents double-crediting computational tax or reusing solutions.
 
@@ -39,6 +39,7 @@ DEFAULT_CHALLENGE_TTL = 120  # 2 minutes
 MIN_POW_DIFFICULTY = 1
 MAX_POW_DIFFICULTY = 8
 MAX_REPLAY_CACHE_SIZE = 16384
+MAX_NONCE_LENGTH = 256
 
 
 def _load_or_create_secret(secret_path: Path = DEFAULT_SECRET_PATH, fail_closed: bool | None = None) -> bytes:
@@ -80,22 +81,15 @@ class PoWGate:
         expired = [token for token, exp in self._consumed_challenges.items() if exp <= now]
         for token in expired:
             self._consumed_challenges.pop(token, None)
-        if len(self._consumed_challenges) > MAX_REPLAY_CACHE_SIZE:
-            excess = len(self._consumed_challenges) - MAX_REPLAY_CACHE_SIZE
-            oldest = sorted(self._consumed_challenges.items(), key=lambda x: x[1])[:excess]
-            for token, _ in oldest:
-                self._consumed_challenges.pop(token, None)
 
     def generate_challenge(self, client_ip: str, difficulty: int = 4, now: int | None = None) -> dict:
         """Mint a stateless cryptographic client puzzle.
         
-        difficulty: number of required leading hexadecimal zeros in sha256(salt + nonce).
-          - difficulty 3: ~4,096 hashes (~1-10 ms)   - lightweight bot friction
-          - difficulty 4: ~65,536 hashes (~50-250 ms) - standard scanner dampener
-          - difficulty 5: ~1,048,576 hashes (~1-4 s)  - heavy brute-force throttle
-          - difficulty 6: ~16,777,216 hashes (~15-60 s) - aggressive swarm freeze
+        difficulty is the required number of leading hexadecimal zeros in
+        sha256(salt + ':' + nonce). Expected brute-force work is 16**difficulty
+        hashes; elapsed time varies with the solver and hardware.
         """
-        if difficulty < MIN_POW_DIFFICULTY or difficulty > MAX_POW_DIFFICULTY:
+        if type(difficulty) is not int or difficulty < MIN_POW_DIFFICULTY or difficulty > MAX_POW_DIFFICULTY:
             raise ValueError(f"difficulty {difficulty} out of bounds [{MIN_POW_DIFFICULTY}, {MAX_POW_DIFFICULTY}]")
         now = int(time.time() if now is None else now)
         cid = secrets.token_hex(8)
@@ -112,7 +106,7 @@ class PoWGate:
             "prefix": "0" * difficulty,
             "salt": salt,
             "sig": sig,
-            "algorithm": "sha256(salt + nonce) with leading prefix",
+            "algorithm": "sha256(salt + ':' + nonce) with leading prefix",
         }
 
     def verify_solution(
@@ -123,31 +117,37 @@ class PoWGate:
         record_tax: bool = True,
         check_replay: bool = False,
     ) -> tuple[bool, str]:
-        """Stateless O(1) verification of the client's submitted solution.
+        """Verify a bounded solution, with process-local atomic replay protection.
         
         Validates difficulty bounds, timestamp TTL, IP binding, and HMAC signature
         BEFORE allocating the prefix string or computing hashes.
         
-        If check_replay is True, verifies that the challenge/nonce has not been
+        If check_replay is True, verifies that the challenge has not been
         previously consumed. Even if check_replay is False, tax accounting is
         strictly deduplicated so replayed solutions never double-credit work tax.
+        A full cache rejects new challenges rather than forgetting live replay
+        entries. Shared keys across workers still require shared replay custody.
         """
         now = int(time.time())
-        cid = str(challenge.get("challenge_id", "")).strip()
-        salt = str(challenge.get("salt", "")).strip()
-        sig = str(challenge.get("sig", "")).strip()
-
-        try:
-            created_at = int(challenge.get("created_at", 0))
-            difficulty = int(challenge.get("difficulty", 0))
-        except (ValueError, TypeError):
+        if not isinstance(challenge, dict):
+            return False, "malformed_challenge"
+        created_at = challenge.get("created_at")
+        difficulty = challenge.get("difficulty")
+        if type(created_at) is not int or type(difficulty) is not int:
             return False, "invalid_numeric_fields"
 
         # 0. Numeric bounds validation (O(1), before memory allocation or hashing)
         if difficulty < MIN_POW_DIFFICULTY or difficulty > MAX_POW_DIFFICULTY:
             return False, "difficulty_out_of_bounds"
-        if not cid or not salt or not sig:
+        cid, salt, sig = (challenge.get(key) for key in ("challenge_id", "salt", "sig"))
+        if any(not isinstance(value, str) or not value or len(value) > limit or not value.isascii()
+               for value, limit in ((cid, 64), (salt, 128), (sig, 64))):
             return False, "malformed_challenge"
+        if (not isinstance(nonce, str) or len(nonce) > MAX_NONCE_LENGTH or not nonce.isascii()):
+            return False, "malformed_nonce"
+        nonce = nonce.strip()
+        if not isinstance(client_ip, str) or len(client_ip) > 128 or not client_ip.isascii():
+            return False, "malformed_client_ip"
 
         # 1. TTL Check
         if now - created_at > self.ttl:
@@ -162,26 +162,26 @@ class PoWGate:
         if not hmac.compare_digest(sig, expected_sig):
             return False, "invalid_signature"
 
-        # 3. Replay Check
-        replay_token = f"{sig}:{str(nonce).strip()}"
-        with self._consumed_lock:
-            self._prune_consumed_cache(now)
-            is_consumed = replay_token in self._consumed_challenges
-
-        if check_replay and is_consumed:
-            return False, "challenge_already_consumed"
-
-        # 4. Work Verification (single SHA-256 computation) - allocation only happens here after sig check
+        # 3. Work Verification (single SHA-256 computation) after bounds/signature checks.
         prefix = "0" * difficulty
-        preimage = f"{salt}:{str(nonce).strip()}".encode("utf-8")
+        preimage = f"{salt}:{nonce}".encode("utf-8")
         h = hashlib.sha256(preimage).hexdigest()
         if not h.startswith(prefix):
             return False, "insufficient_proof_of_work"
 
-        # 5. Idempotent Accounting: credit tax and mark consumed on first valid verification
-        if not is_consumed:
-            with self._consumed_lock:
+        # 4. Claim the challenge atomically. All valid nonces share one admission
+        # and one accounting credit; the check and insert cannot race.
+        replay_token = sig
+        with self._consumed_lock:
+            self._prune_consumed_cache(now)
+            is_consumed = replay_token in self._consumed_challenges
+            if check_replay and is_consumed:
+                return False, "challenge_already_consumed"
+            if not is_consumed:
+                if len(self._consumed_challenges) >= MAX_REPLAY_CACHE_SIZE:
+                    return False, "replay_cache_full"
                 self._consumed_challenges[replay_token] = created_at + self.ttl + 30
+        if not is_consumed:
             if record_tax and self.bounty_ledger is not None:
                 try:
                     estimated_iters = 16 ** difficulty
