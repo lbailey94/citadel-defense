@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citadel-shield"
-version = "3.0.1"
+version = "3.0.2"
 authors = [
   { name="Lucas Bailey & WhiteMagic Sangha", email="ops@whitemagic.dev" },
 ]
@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "eth-account>=0.8.0",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

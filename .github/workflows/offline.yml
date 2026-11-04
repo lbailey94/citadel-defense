@@ -1,0 +1,22 @@
+name: Offline admission and packaging
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[dev]' build
+      - name: Synthetic admission, replay and assurance controls
+        run: python -m pytest -q defense/test_pow_gate.py defense/test_citadel_shield.py defense/test_pqc_claim_boundaries.py
+      - run: python -m build
+      - name: Import installed wheel outside checkout
+        run: |
+          python -m venv /tmp/citadel-wheel
+          /tmp/citadel-wheel/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/citadel-wheel/bin/python -I -c 'from citadel_shield.middleware import CitadelShieldMiddleware; from defense.violet_pow_gate import PoWGate'

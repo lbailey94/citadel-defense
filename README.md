@@ -155,3 +155,24 @@ transcripts, or every execution path.
 ## License
 
 [MIT](LICENSE) · Copyright (c) 2026 Lucas Bailey / WhiteMagic Labs.
+
+### Supported middleware deployment contract
+
+Use one process with one `PoWGate` per admission domain. Multiple middleware
+instances in that process may receive the same `pow_gate=` object, sharing
+its atomic replay cache. Separate workers and restarts do not share consumed
+challenges; shared signing keys alone do not solve that problem. A multiworker
+or restart-persistent deployment needs an independently qualified shared atomic
+consumption backend. The default ephemeral signing key invalidates old puzzles
+on restart; do not infer this for an operator-supplied persistent key.
+
+`protected_prefixes=("/api/heavy",)` matches that path and its child paths,
+not `/api/heavy-other`. Configure other absolute path prefixes explicitly.
+`admission_counts` exposes process-local outcome counts for application-owned
+metrics; it contains no IPs, request bodies or solution tokens. Both puzzle
+binding and decoy attribution use the ASGI peer. Configure any trusted proxy's
+sanitized peer handling at the ASGI server; client-provided forwarded headers
+are never trusted directly by this middleware.
+
+The offline CI uses synthetic puzzles, fixtures and installed-package imports.
+It does not run sweepers, contact targets, use wallets or qualify a live host.
