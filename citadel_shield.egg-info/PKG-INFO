@@ -1,0 +1,200 @@
+Metadata-Version: 2.4
+Name: citadel-shield
+Version: 3.0.2
+Summary: Thermodynamic, negative-expected-value (-EV) active cyberdefense framework for modern web and decentralized infrastructure.
+Author-email: Lucas Bailey & WhiteMagic Sangha <ops@whitemagic.dev>
+Project-URL: Homepage, https://github.com/lbailey94/citadel-defense
+Project-URL: Whitepaper, https://github.com/lbailey94/citadel-defense/blob/main/docs/CITADEL_THEORY_AND_ARCHITECTURE.md
+Project-URL: Live Telemetry, https://mcp.whitemagic.dev/defense
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Topic :: Security
+Classifier: Topic :: Internet :: Proxy Servers
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: eth-account>=0.8.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Dynamic: license-file
+
+# The Citadel
+
+Experimental security tools for agent workflows: Linux confinement, environment
+filtering, signed single-packet authorization, decoy services, receipt tooling,
+and small Bend algebraic examples. Code is MIT licensed.
+
+Start with [audit scope and evidence boundaries](docs/AUDIT_SCOPE.md). The old
+[practice audit report](docs/PRACTICE_AUDIT_REPORT.md) is withdrawn as an assurance
+claim. No independent security audit or production qualification is established
+by this repository's internal checks.
+
+## What each part currently demonstrates
+
+| Area | Artifact | Evidence boundary |
+|---|---|---|
+| Signature experiments | `defense/violet_pqc.py` | Ed25519 plus custom hash-chain code. This is not a complete SLH-DSA implementation, a FIPS conformance claim, or a measured quantum-security margin. |
+| Single-packet authorization | `defense/violet_spa.py`, `defense/violet_xdp_spa.py`, `defense/violet_xdp_spa.c` | The Python benchmark exercises signed knocks, replay/tamper cases, and a Python packet-table simulation. Compiling a BPF ELF does not load it into a kernel. Its Python timings are not NIC/driver drop latency. |
+| Proof-of-work puzzle gate | `defense/violet_pow_gate.py`, `citadel_shield/middleware.py` | HMAC-SHA256 challenge issuance, bounded solution verification and process-local single-use admission. Expected brute-force solving takes 16^difficulty hashes; this does not measure an operator's cost or establish general attack prevention. Solvers run locally in tests. |
+| Web3 sweeper gas-trap | `defense/violet_gas_trap.py` | Deceptive zero-native-gas honeypot wallet and front-running simulation. Dual-hash forensic ledger of captured attacker gas. Simulates mempool counter-drains under controlled conditions. |
+| Monetized lanes & bounty ledger | `defense/violet_bounty_ledger.py` | Tamper-evident dual-hash accounting ledger tracking on-chain gas sweeps, cognitive token burns, forced PoW hashes, and x402 revenue extracted from adversaries. |
+| Comprehensive benchmark | `defense/citadel_comprehensive_benchmark.py` | Six-track micro-benchmark of PoW gates, LLM token sponges, canary minting/verification, Web3 traps, flytrap taxonomy, and SPA knock generation. Metrics reflect local host throughput. |
+| Theory & architecture | `docs/CITADEL_THEORY_AND_ARCHITECTURE.md` | Comprehensive theoretical foundation and operational blueprint detailing biomimetic defense, counter-economics, and line-rate hardware defenses. |
+| Decoys and canaries | `defense/violet_digital_twin.py` | Controlled decoy and token-detection exercises. Detection rates apply to the supplied cases. The historical economic ratio used assumed token and CPU prices; it is not evidence of adversaries' real costs or general defensive advantage. |
+| Replay filters | `defense/violet_immunize.py` | Deterministic rule generation and replay against a finite corpus. No general zero-false-positive guarantee follows. |
+| Peer notifications and chunks | `defense/violet_mesh_event.py`, `defense/sangha_iroh_swarm.py` | Local protocol and chunk-integrity exercises. They do not establish independent multi-host coordination or a deployed network's behavior. |
+| Confinement and airlock | `defense/mandala_kekkai.py`, `defense/sangha_kekkai.py`, `plugins/opencode-citadel-airlock.js` | Experimental filesystem/network restrictions and environment filtering. Qualification requires actual kernel/support identity, readable and writable positive controls, denied negative controls, subprocess startup evidence, and precise runtime integration. |
+| Algebraic examples | `proofs/citta_pac_laws.bend` | Nine Bool/Nat lemmas. These do not prove implementation-level capability attenuation, anti-rollback correctness, safe fallback, or model-weight behavior. |
+| Synthetic folds | `proofs/citta_pac_swarm.bend`, `proofs/cpr_batch.bend` | Fixed-depth U32 arithmetic tree folds. Leaves are not running agents or cryptographically verified receipts. |
+
+The seven-ring arrangement is a design organization. It does not mean an
+attacker must defeat every component or that touching one decoy prevents an
+attack. Source modules may retain historical names; use the boundaries above
+when interpreting those names and older reports.
+
+## Reproduce a bounded check
+
+Requirements: Python 3.10+ and a compatible Bend compiler on `PATH` (the current
+local reproduction used Bend 2.0.39). The report command does not import the
+product modules, read personal keys, or mutate a personal WhiteMagic store.
+Select an output directory outside this checkout to keep your working tree clean:
+
+```bash
+python3 defense/practice_audit_battery.py --checks bend --output-dir /tmp/citadel-internal-checks
+python3 -m unittest discover -s defense -p test_practice_audit_reporting.py -v
+```
+
+To run the Citadel Comprehensive Benchmark across all defense and counter-economic tracks:
+
+```bash
+python3 defense/citadel_comprehensive_benchmark.py
+python3 -m pytest -v defense/test_citadel_benchmark.py defense/test_pow_gate.py defense/test_gas_trap.py
+```
+
+With `cryptography` installed, `python3 -m unittest discover -s defense -p
+test_pqc_claim_boundaries.py -v` also checks experimental output disclosures,
+an isolated signature/tamper fixture, and failure exit status. It uses temporary
+fixture keys and does not qualify the custom construction for security use.
+
+The Bend selection runs both the front-end check and the separate `--verdict`
+kernel recheck. The latter needs the kernel dependencies reported by Bend
+(the local tool requests Lean 4.34.0 or a built `BENDTT` kernel). Missing kernel
+infrastructure is `NOT_EVALUATED`, even if the front-end checker succeeds.
+
+The paired JSON/Markdown reports record compiler and source hashes, command
+outputs, process wall times, and synthetic leaves per second calculated from
+the same measurement. Wall time includes compiler checking and startup.
+`PASS` applies to the selected checks only; unsupported lanes remain
+`NOT_EVALUATED` with reasons.
+
+Exit status is `0` when all selected checks pass, `1` for an actual failed check,
+and `2` when selected checks cannot be evaluated. Missing engines, matching
+crashes, empty output, and malformed verifier results cannot create parity.
+
+For a separate CPR agreement check, first build the Python/Rust/JavaScript
+verifiers according to the selected CPR checkout's own instructions, then pass
+its exact location explicitly:
+
+```bash
+python3 defense/practice_audit_battery.py --checks differential --cpr-dir /path/to/continuity-receipt --output-dir /tmp/citadel-cpr-agreement
+```
+
+This checks the three bundle manifests, honors their anchor options, and
+compares verdicts and error codes against each other and the declared expected
+outcomes. Manifests themselves are not counted as receipt fixtures.
+Agreement between three implementations maintained in the same project is
+useful consistency evidence; an independent oracle and source-to-binary build
+provenance still need separate evidence.
+
+## Optional ASGI proof-of-work admission
+
+Enable the gate explicitly with `CitadelShieldMiddleware(app, enable_pow_gate=True,
+pow_difficulty=4)`. Difficulty is an integer from 1 through 8, measured in leading
+hexadecimal zeros. The default is 4. Invalid settings or an enabled gate's
+initialization failure stop startup rather than enabling passthrough.
+
+Requests under `/api/heavy` receive HTTP 428 and a JSON `challenge`. Solve it with
+`PoWGate.solve(challenge)`, then send `X-Citadel-PoW-Solution` containing a JSON
+object `{"challenge": <the issued object>, "nonce": "<solver nonce>"}`. The
+middleware verifies the signature, transport-peer IP, lifetime, configured
+minimum difficulty and work before calling the application. The header is
+limited to 4096 bytes; duplicate, malformed and invalid solutions receive a new
+challenge. Each challenge admits one request, including when different valid
+nonces are submitted concurrently. Ledger work counts remain estimates rather
+than measured hashes performed by a client.
+
+Replay custody is in memory for one `PoWGate` instance and has a bounded cache.
+When full, it refuses new redemptions until entries expire; it does not evict
+live entries to make replay possible. This is not shared multiworker replay
+protection: workers using one signing secret require shared replay custody or
+challenge routing to the issuing instance. Ephemeral fallback secrets also do
+not survive process restarts. Proxy deployments must establish the trusted
+transport peer upstream; this admission path does not trust client-supplied
+`X-Forwarded-For`. No deployed service or outside attack resistance is qualified
+by these local ASGI and gate tests.
+
+## Standalone launcher smoke
+
+`defense/opencode_kekkai_launcher.py` uses Python's standard library. The
+Linux backend needs x86_64 or arm64 and a kernel exposing Landlock; unsupported
+hosts fail before spawning the child. Run a harmless owned-workspace fixture
+with a deliberately minimal environment:
+
+```sh
+scratch=$(mktemp -d) || exit 1
+workspace="$scratch/workspace"
+mkdir "$scratch/home" "$workspace"
+printf '%s\n' 'owned launcher fixture' > "$workspace/probe.txt"
+env -i PATH=/usr/bin:/bin HOME="$scratch/home" python3 \
+  defense/opencode_kekkai_launcher.py --workspace "$workspace" -- \
+  /usr/bin/cat "$workspace/probe.txt"
+rm -r -- "$scratch"
+```
+
+The launcher installs filesystem restrictions only. It inherits the child
+environment and leaves networking unrestricted; it does not scrub credentials
+or establish an OpenCode/Devin client integration. The fixture above only
+checks child startup and an allowed read. Use the separate confinement
+positive/negative controls before making a containment claim. macOS has a
+separate Seatbelt path; this Linux fixture does not qualify it.
+
+## Demonstrations and integration work
+
+[`arena/halo_ctf_visualizer.html`](arena/halo_ctf_visualizer.html) is an illustrative
+animation. Its scripted scores, killfeed, and timing labels are not live
+red-team telemetry. The legacy master benchmark and escape/mutation scripts
+also need review before their printed success labels can serve as acceptance
+criteria; see [the open review list](docs/AUDIT_SCOPE.md).
+
+[`docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md`](docs/OPENCODE_2_1_1_SECURITY_ALIGNMENT_REPORT.md)
+is a maintainer-authored study of a named historical version. The plugin and
+launcher need qualification against the exact host/runtime being used. Installing
+an environment filter alone does not establish protection of credentials,
+transcripts, or every execution path.
+
+## License
+
+[MIT](LICENSE) · Copyright (c) 2026 Lucas Bailey / WhiteMagic Labs.
+
+### Supported middleware deployment contract
+
+Use one process with one `PoWGate` per admission domain. Multiple middleware
+instances in that process may receive the same `pow_gate=` object, sharing
+its atomic replay cache. Separate workers and restarts do not share consumed
+challenges; shared signing keys alone do not solve that problem. A multiworker
+or restart-persistent deployment needs an independently qualified shared atomic
+consumption backend. The default ephemeral signing key invalidates old puzzles
+on restart; do not infer this for an operator-supplied persistent key.
+
+`protected_prefixes=("/api/heavy",)` matches that path and its child paths,
+not `/api/heavy-other`. Configure other absolute path prefixes explicitly.
+`admission_counts` exposes process-local outcome counts for application-owned
+metrics; it contains no IPs, request bodies or solution tokens. Both puzzle
+binding and decoy attribution use the ASGI peer. Configure any trusted proxy's
+sanitized peer handling at the ASGI server; client-provided forwarded headers
+are never trusted directly by this middleware.
+
+The offline CI uses synthetic puzzles, fixtures and installed-package imports.
+It does not run sweepers, contact targets, use wallets or qualify a live host.

@@ -259,3 +259,42 @@ def test_pow_initialization_failure_is_not_silently_disabled(monkeypatch):
     monkeypatch.setattr(module.vpg, "PoWGate", fail)
     with pytest.raises(RuntimeError, match="configured secret unavailable"):
         CitadelShieldMiddleware(MockASGIApp(), enable_deception=False, enable_pow_gate=True)
+
+@pytest.mark.asyncio
+async def test_custom_route_prefix_has_path_boundaries():
+    app = MockASGIApp()
+    gate = CitadelShieldMiddleware(app, enable_deception=False, enable_pow_gate=True,
+                                  pow_difficulty=1, protected_prefixes=("/expensive",))
+    async def send(_event):
+        pass
+    for path, expected in (("/api/heavy", True), ("/expensive-other", True),
+                           ("/expensive", False), ("/expensive/job", False)):
+        app.called = False
+        await gate({"type":"http", "path":path, "headers":[], "client":("192.0.2.1",1)}, None, send)
+        assert app.called is expected
+    assert gate.admission_counts["missing_solution"] == 2
+
+@pytest.mark.asyncio
+async def test_shared_gate_replay_custody_between_middleware_instances():
+    from defense.violet_pow_gate import PoWGate
+    gate = PoWGate(secret=b"fixture-key-never-production-1234")
+    puzzle = gate.generate_challenge("192.0.2.1", difficulty=1)
+    nonce, _, _ = gate.solve(puzzle)
+    assert nonce is not None
+    headers = [(b"x-citadel-pow-solution", json.dumps({"challenge":puzzle,"nonce":nonce}).encode())]
+    async def send(_event):
+        pass
+    outcomes = []
+    for _ in range(2):
+        app = MockASGIApp()
+        shield = CitadelShieldMiddleware(app, enable_deception=False, enable_pow_gate=True,
+                                        pow_difficulty=1, pow_gate=gate)
+        await shield({"type":"http", "path":"/api/heavy", "headers":headers,
+                      "client":("192.0.2.1",1)}, None, send)
+        outcomes.append(app.called)
+    assert outcomes == [True, False]
+
+@pytest.mark.parametrize("prefixes", [(), ["/api"], ("relative",), (None,), ("/api?x=1",)])
+def test_invalid_protected_routes_refuse_startup(prefixes):
+    with pytest.raises(ValueError):
+        CitadelShieldMiddleware(MockASGIApp(), protected_prefixes=prefixes)
