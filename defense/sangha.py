@@ -367,14 +367,14 @@ def verify_post_receipt(item_str):
 
 
 DEFAULT_CHECKOUTS = [
-    {"name": "WMv10", "path": "~/Desktop/front burner/WHITEMAGIC/WMv10"},
-    {"name": "WMgen3", "path": "~/Desktop/front burner/WHITEMAGIC/WMgen3"},
-    {"name": "continuity-receipt", "path": "~/Desktop/front burner/continuity-receipt"},
-    {"name": "whitemagic-site", "path": "~/Desktop/front burner/WHITEMAGIC/whitemagic-site"},
-    {"name": "MANDALA_OS", "path": "~/Desktop/front burner/MANDALA_OS"},
+    {"name": "WMv10", "path": "~/Desktop/front burner/repos/WHITEMAGIC/WMv10"},
+    {"name": "WMgen3", "path": "~/Desktop/front burner/repos/WHITEMAGIC/WMgen3"},
+    {"name": "continuity-receipt", "path": "~/Desktop/front burner/repos/continuity-receipt"},
+    {"name": "whitemagic-site", "path": "~/Desktop/front burner/repos/WHITEMAGIC/whitemagic-site"},
+    {"name": "MANDALA_OS", "path": "~/Desktop/front burner/repos/MANDALA_OS"},
     # Intentionally unversioned (kit + workspace): recent edits stay visible in
     # the row, but never raise a finding — claiming is for trees with a VCS gap.
-    {"name": "hosted-kit", "path": "~/Desktop/front burner/WHITEMAGIC/planning/private/hosted-kit", "unversioned_ok": True},
+    {"name": "hosted-kit", "path": "~/Desktop/front burner/repos/WHITEMAGIC/planning/private/hosted-kit", "unversioned_ok": True},
     {"name": "SharedWorkspace", "path": "~/SharedWorkspace", "unversioned_ok": True},
 ]
 CHECKOUTS_CONFIG = Path(os.environ.get("SANGHA_CHECKOUTS", "") or Path.home() / ".config" / "sangha" / "checkouts.json")
