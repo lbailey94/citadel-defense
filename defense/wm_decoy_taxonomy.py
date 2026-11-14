@@ -29,8 +29,14 @@ _PATH_PREFIX_CLASSES = (
 CANARY_REPLAY = "canary_replay"          # conclusive on its own
 SSH_SESSION = "ssh_decoy_session"        # a login attempt against the Cowrie decoy
 SSH_ACTION = "ssh_decoy_action"          # command, download or proxy pivot inside the decoy
+SSH_SCANNER_BURST = "ssh_scanner_burst"  # rapid sequential Cowrie scanner burst / automated banner
 
-ALL_CLASSES = tuple(c for c, _ in _PATH_PREFIX_CLASSES) + (SSH_SESSION, SSH_ACTION, CANARY_REPLAY)
+ALL_CLASSES = tuple(c for c, _ in _PATH_PREFIX_CLASSES) + (
+    SSH_SESSION,
+    SSH_ACTION,
+    SSH_SCANNER_BURST,
+    CANARY_REPLAY,
+)
 
 # Addresses that are never promoted or published: this node and the operator.
 PROTECTED_PUBLIC_IPS = frozenset({"152.53.195.47", "174.56.168.79"})
@@ -57,6 +63,56 @@ def classify_cowrie_event(eventid: str) -> str | None:
                    "cowrie.direct-tcpip.request"):
         return SSH_ACTION
     return None
+
+
+AUTOMATED_SSH_BANNER_PREFIXES = (
+    "ssh-2.0-go",
+    "ssh-2.0-nmap",
+    "ssh-2.0-zgrab",
+    "ssh-2.0-masscan",
+    "ssh-2.0-libssh",
+    "ssh-2.0-paramiko",
+    "ssh-2.0-asyncssh",
+)
+
+PROXY_SERVICE_PORTS: dict[int, str] = {
+    22: "ssh_pivot",
+    23: "telnet_pivot",
+    25: "smtp_relay",
+    53: "dns_probe",
+    80: "http_tunnel",
+    443: "https_tunnel",
+    465: "smtp_relay",
+    587: "smtp_relay",
+    1080: "socks_pivot",
+    2323: "telnet_pivot",
+    3128: "http_proxy_pivot",
+    3306: "db_pivot",
+    3389: "rdp_pivot",
+    5432: "db_pivot",
+    5900: "vnc_pivot",
+    6379: "db_pivot",
+    8080: "http_tunnel",
+    8443: "https_tunnel",
+    27017: "db_pivot",
+}
+
+
+def is_automated_ssh_banner(version: str | None) -> bool:
+    """Return True when an SSH client banner matches an automated scanner or scripted client."""
+    low = (version or "").strip().lower()
+    if not low:
+        return False
+    return any(low.startswith(prefix) for prefix in AUTOMATED_SSH_BANNER_PREFIXES)
+
+
+def classify_proxy_port(dst_port: int | str | None) -> str:
+    """Map a Cowrie direct-tcpip destination port to a low-cardinality proxy service category."""
+    try:
+        port = int(dst_port)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "other"
+    return PROXY_SERVICE_PORTS.get(port, "other")
 
 
 class Allowlist:
