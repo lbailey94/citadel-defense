@@ -9,6 +9,21 @@ Start with [audit scope and evidence boundaries](docs/AUDIT_SCOPE.md). The old
 claim. No independent security audit or production qualification is established
 by this repository's internal checks.
 
+## Try the published Python library
+
+On a POSIX shell with Python 3.10 or newer, install the published
+[`citadel-shield` wheel](https://pypi.org/project/citadel-shield/3.0.2/) in a
+fresh project directory:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install 'citadel-shield==3.0.2'
+.venv/bin/python -c 'from citadel_shield import CitadelShieldMiddleware; print(CitadelShieldMiddleware.__name__)'
+```
+
+Expect `CitadelShieldMiddleware`. The wheel provides a Python library. The Bend
+examples and source-level audit exercises are in this repository.
+
 ## What each part currently demonstrates
 
 | Area | Artifact | Evidence boundary |
