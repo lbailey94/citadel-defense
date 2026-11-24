@@ -13,10 +13,12 @@ bounded retries, and an idle gate against the bridge fleet view.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import fcntl
 import json
 import os
 import re
+import select
 import sqlite3
 import subprocess
 import sys
@@ -43,6 +45,77 @@ HOP_RE = re.compile(r"^>?\s*Hop:\s*(\d+)\s*$", re.MULTILINE | re.IGNORECASE)
 THREAD_RE = re.compile(r"^>?\s*Thread:\s*(\S+)\s*$", re.MULTILINE | re.IGNORECASE)
 DOORBELL_OK_RE = re.compile(r"^[\w @:./#?&=%+-]+$")
 _LOG_PATH = None
+IN_CLOSE_WRITE = 0x00000008
+IN_MOVED_TO = 0x00000080
+IN_NONBLOCK = 0o4000
+IN_CLOEXEC = 0o2000000
+
+
+class BoardInotify:
+    """Zero-dependency Linux inotify watcher with graceful polling fallback."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = Path(directory)
+        self._libc = None
+        self.fd: int | None = None
+        self.wd: int = -1
+
+    def __enter__(self) -> "BoardInotify":
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            fd = int(libc.inotify_init1(IN_NONBLOCK | IN_CLOEXEC))
+            if fd < 0:
+                return self
+            encoded = os.fsencode(os.fspath(self.directory))
+            wd = int(libc.inotify_add_watch(fd, encoded, IN_CLOSE_WRITE | IN_MOVED_TO))
+            if wd < 0:
+                os.close(fd)
+                return self
+            self._libc = libc
+            self.fd = fd
+            self.wd = wd
+        except Exception:
+            if self.fd is not None and self.fd >= 0:
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+            self.fd = None
+            self.wd = -1
+        return self
+
+    def wait(self, timeout_s: float) -> bool:
+        timeout_s = max(0.0, float(timeout_s))
+        if self.fd is None:
+            time.sleep(timeout_s)
+            return False
+        readable, _, _ = select.select([self.fd], [], [], timeout_s)
+        if not readable:
+            return False
+        while True:
+            try:
+                chunk = os.read(self.fd, 65536)
+                if not chunk:
+                    break
+            except BlockingIOError:
+                break
+            except OSError:
+                break
+        return True
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.fd is not None:
+            try:
+                if self._libc is not None and self.wd >= 0:
+                    self._libc.inotify_rm_watch(self.fd, self.wd)
+            except Exception:
+                pass
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+            self.wd = -1
 
 
 def set_log_file(path):
@@ -67,7 +140,8 @@ def emit(event):
 def parse_post(path):
     """Header + loop metadata from a board post file."""
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        with Path(path).open(encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
     except OSError:
         return None
     post = {"path": Path(path), "file": Path(path).name, "seq": None, "title": None,
@@ -193,8 +267,18 @@ def open_state(path):
     return db
 
 
+def load_known_done(db):
+    return {
+        row[0]
+        for row in db.execute(
+            "SELECT file FROM delivered UNION SELECT file FROM skipped"
+        ).fetchall()
+    }
+
+
 def load_config(path):
-    cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    with Path(path).open(encoding="utf-8") as cf:
+        cfg = json.load(cf)
     cfg.setdefault("max_hop", 3)
     cfg.setdefault("poll_s", 3.0)
     cfg.setdefault("idle_fresh_s", 120)
@@ -220,7 +304,7 @@ def default_wake(cfg):
     return _wake
 
 
-def _record_attempt(db, file, cfg):
+def _record_attempt(db, file, cfg, known_done=None):
     row = db.execute("SELECT n FROM attempts WHERE file=?", (file,)).fetchone()
     n = (row[0] if row else 0) + 1
     db.execute("INSERT INTO attempts(file,n,at) VALUES(?,?,datetime('now')) "
@@ -228,15 +312,19 @@ def _record_attempt(db, file, cfg):
     if n >= cfg.get("max_retries", 3):
         db.execute("INSERT OR IGNORE INTO skipped(file,reason,at) VALUES(?,?,datetime('now'))",
                    (file, "dead_letter"))
+        if known_done is not None:
+            known_done.add(file)
         return n, True
     return n, False
 
 
 def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None,
-              emit_fn=emit, clock=time.time):
+              emit_fn=emit, clock=time.time, known_done=None):
     board = Path(board)
     wake_fn = wake_fn or default_wake(cfg)
     fleet_fn = fleet_fn or fetch_fleet
+    if known_done is None:
+        known_done = load_known_done(db)
     results = {"wake": 0, "skip": 0, "defer": 0, "would_wake": 0, "error": 0}
     fleet = None
 
@@ -252,16 +340,18 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
         return target_busy(fleet, route.get("agent"), route.get("session_title"),
                            cfg.get("idle_fresh_s", 120))
 
-    for path in sorted(board.glob("*.md")):
-        file = path.name
-        if db.execute("SELECT 1 FROM delivered WHERE file=?", (file,)).fetchone():
+    marker_dir = Path.home() / ".local" / "state" / "sangha" / "plugin" / "markers"
+    entries = sorted(
+        (e for e in os.scandir(board) if e.name.endswith(".md") and e.is_file()),
+        key=lambda e: e.name,
+    )
+    for entry in entries:
+        file = entry.name
+        if file in known_done:
             continue
-        if db.execute("SELECT 1 FROM skipped WHERE file=?", (file,)).fetchone():
+        if (marker_dir / file).exists():
             continue
-        plugin_marker = Path.home() / ".local" / "state" / "sangha" / "plugin" / "markers" / file
-        if plugin_marker.exists():
-            continue
-        post = parse_post(path)
+        post = parse_post(entry.path)
         if post is None:
             continue
         verdict = evaluate(post, cfg, max_hop)
@@ -272,11 +362,12 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
             db.execute("INSERT OR IGNORE INTO skipped(file,reason,at) VALUES(?,?,datetime('now'))",
                        (file, verdict["reason"]))
             db.commit()
+            known_done.add(file)
             results["skip"] += 1
             emit_fn({**base, "event": "skip", "reason": verdict["reason"]})
             continue
         if busy(route):
-            n, dead = _record_attempt(db, file, cfg)
+            n, dead = _record_attempt(db, file, cfg, known_done=known_done)
             db.commit()
             results["defer"] += 1
             emit_fn({**base, "event": "defer", "reason": "target_busy", "attempt": n,
@@ -285,7 +376,7 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
         last = db.execute("SELECT at FROM last_wake WHERE route=?", (verdict["route_name"],)).fetchone()
         gap = cfg.get("min_wake_interval_s", 15)
         if last and clock() - last[0] < gap:
-            n, dead = _record_attempt(db, file, cfg)
+            n, dead = _record_attempt(db, file, cfg, known_done=known_done)
             db.commit()
             results["defer"] += 1
             emit_fn({**base, "event": "defer", "reason": "rate_limited", "attempt": n,
@@ -297,6 +388,7 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
             db.execute("INSERT OR IGNORE INTO skipped(file,reason,at) VALUES(?,?,datetime('now'))",
                        (file, "bad_doorbell"))
             db.commit()
+            known_done.add(file)
             results["error"] += 1
             emit_fn({**base, "event": "error", "reason": "bad_doorbell", "detail": str(exc)})
             continue
@@ -307,7 +399,7 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
         try:
             wake_fn(route, doorbell)
         except Exception as exc:
-            n, dead = _record_attempt(db, file, cfg)
+            n, dead = _record_attempt(db, file, cfg, known_done=known_done)
             db.commit()
             results["error"] += 1
             emit_fn({**base, "event": "wake_failed", "reason": str(exc), "attempt": n,
@@ -317,6 +409,7 @@ def scan_once(board, db, cfg, *, max_hop, dry=False, wake_fn=None, fleet_fn=None
         db.execute("INSERT INTO last_wake(route,at) VALUES(?,?) "
                    "ON CONFLICT(route) DO UPDATE SET at=?", (verdict["route_name"], clock(), clock()))
         db.commit()
+        known_done.add(file)
         results["wake"] += 1
         emit_fn({**base, "event": "wake", "doorbell": doorbell})
     return results
@@ -394,21 +487,42 @@ def main():
         sys.exit("another sangha_route instance holds the lock")
 
     if not db.execute("SELECT 1 FROM meta WHERE key='baseline_done'").fetchone():
-        count = 0
-        for path in sorted(board.glob("*.md")):
-            db.execute("INSERT OR IGNORE INTO skipped(file,reason,at) VALUES(?,?,datetime('now'))",
-                       (path.name, "baseline"))
-            count += 1
+        baseline_rows = [
+            (entry.name, "baseline")
+            for entry in sorted(
+                (e for e in os.scandir(board) if e.name.endswith(".md") and e.is_file()),
+                key=lambda e: e.name,
+            )
+        ]
+        if baseline_rows:
+            db.executemany(
+                "INSERT OR IGNORE INTO skipped(file,reason,at) VALUES(?,?,datetime('now'))",
+                baseline_rows,
+            )
         db.execute("INSERT INTO meta(key,value) VALUES('baseline_done',datetime('now'))")
         db.commit()
-        emit({"event": "baseline", "count": count, "dry_run": args.dry_run})
+        emit({"event": "baseline", "count": len(baseline_rows), "dry_run": args.dry_run})
 
+    known_done = load_known_done(db)
+    last_data_version = db.execute("PRAGMA data_version").fetchone()[0]
     interval = args.interval if args.interval is not None else cfg["poll_s"]
-    while True:
-        scan_once(board, db, cfg, max_hop=max_hop, dry=args.dry_run)
-        if args.once:
-            break
-        time.sleep(max(1.0, interval))
+    if args.once:
+        scan_once(board, db, cfg, max_hop=max_hop, dry=args.dry_run, known_done=known_done)
+        return
+
+    with BoardInotify(board) as watcher:
+        while True:
+            cur_ver = db.execute("PRAGMA data_version").fetchone()[0]
+            if cur_ver != last_data_version:
+                known_done = load_known_done(db)
+                last_data_version = cur_ver
+            res = scan_once(board, db, cfg, max_hop=max_hop, dry=args.dry_run, known_done=known_done)
+            last_data_version = db.execute("PRAGMA data_version").fetchone()[0]
+            if res["defer"] > 0 or watcher.fd is None:
+                wait_s = max(1.0, float(interval))
+            else:
+                wait_s = max(30.0, float(interval))
+            watcher.wait(wait_s)
 
 
 if __name__ == "__main__":
