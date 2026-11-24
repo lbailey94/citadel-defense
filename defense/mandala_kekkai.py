@@ -309,8 +309,11 @@ class MandalaKekkai:
             pass
 
         # 2. Trigger Event-Driven Mesh Inoculation
+        added_path = False
         try:
-            sys.path.insert(0, str(HERE))
+            if str(HERE) not in sys.path:
+                sys.path.insert(0, str(HERE))
+                added_path = True
             from violet_mesh_event import MeshHerdImmunity
             mesh = MeshHerdImmunity(key_path=self.key_path)
             mesh.emit_micro_delta(
@@ -321,6 +324,12 @@ class MandalaKekkai:
             )
         except Exception:
             pass
+        finally:
+            if added_path:
+                try:
+                    sys.path.remove(str(HERE))
+                except ValueError:
+                    pass
 
 
 def secrets_hex(n: int) -> str:

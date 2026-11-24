@@ -59,7 +59,7 @@ class XDPAuthorizer:
         ]
 
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
             elf_ok = False
             obj_size = 0
             if self.o_obj.exists():

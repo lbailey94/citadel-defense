@@ -66,7 +66,8 @@ def scan(seat: str, db: sqlite3.Connection, command: list[str] | None,
         if db.execute("SELECT 1 FROM delivered WHERE file=?", (path.name,)).fetchone():
             continue
         try:
-            content = path.read_text(encoding="utf-8")
+            with path.open(encoding="utf-8") as pf:
+                content = pf.read()
         except (OSError, UnicodeError):
             continue
         if seat not in targets(content):

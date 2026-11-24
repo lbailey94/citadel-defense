@@ -340,12 +340,14 @@ def exec_darwin_seatbelt(workspace: str, cmd: list[str]) -> int:
     child_env["TMPDIR"] = private_tmp
     child_env["TMP"] = private_tmp
     child_env["TEMP"] = private_tmp
+    run_timeout = int(os.environ["KEKKAI_TIMEOUT_SEC"]) if os.environ.get("KEKKAI_TIMEOUT_SEC") else None
     try:
         return int(subprocess.run(
             [sandbox_bin, "-p", profile, "--", *cmd],
             cwd=str(workspace_path),
             env=child_env,
             check=False,
+            timeout=run_timeout,
         ).returncode)
     finally:
         shutil.rmtree(private_tmp)
@@ -356,6 +358,7 @@ def exec_linux_confined(workspace: str, cmd: list[str]) -> int:
     # A unique 0700 temp root inside the already-authorized workspace avoids
     # granting writes to shared /tmp just so the launcher can clean up afterward.
     private_tmp = tempfile.mkdtemp(prefix=".opencode-kekkai-tmp-", dir=str(workspace_path))
+    run_timeout = int(os.environ["KEKKAI_TIMEOUT_SEC"]) if os.environ.get("KEKKAI_TIMEOUT_SEC") else None
     try:
         policy = apply_linux_landlock(str(workspace_path), private_tmp)
         print("KEKKAI_POLICY " + json.dumps(policy, sort_keys=True), file=sys.stderr, flush=True)
@@ -363,7 +366,7 @@ def exec_linux_confined(workspace: str, cmd: list[str]) -> int:
         child_env["TMPDIR"] = private_tmp
         child_env["TMP"] = private_tmp
         child_env["TEMP"] = private_tmp
-        return int(subprocess.run(cmd, cwd=str(workspace_path), env=child_env, check=False).returncode)
+        return int(subprocess.run(cmd, cwd=str(workspace_path), env=child_env, check=False, timeout=run_timeout).returncode)
     finally:
         # The private directory itself is explicitly writable by the restricted process.
         shutil.rmtree(private_tmp)

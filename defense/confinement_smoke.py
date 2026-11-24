@@ -231,6 +231,7 @@ print('fake-home filesystem boundary: PASS')
                 text=True,
                 check=False,
                 env=env,
+                timeout=30,
             )
             self.assertEqual(actual.returncode, 0, actual.stderr + actual.stdout)
             self.assertIn("fake-home filesystem boundary: PASS", actual.stdout)
@@ -279,6 +280,7 @@ else:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=30,
             )
             self.assertEqual(control.returncode, 0, control.stderr)
             print(
@@ -302,6 +304,7 @@ else:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=30,
             )
             self.assertEqual(actual.returncode, 0, actual.stderr)
             self.assertIn('"backend": "Landlock"', actual.stderr)

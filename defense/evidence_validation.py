@@ -104,7 +104,8 @@ def validate_evidence_manifest(manifest_path: Path | None, now: datetime | None 
                 target = (manifest_path.parent / rel).resolve()
                 try:
                     target.relative_to(manifest_path.parent.resolve())
-                    content = target.read_bytes()
+                    with target.open("rb") as tf:
+                        content = tf.read()
                     data = strict_json_loads(content)
                     if hashlib.sha256(content).hexdigest() != digest.lower():
                         details["reason"] = "digest mismatch"

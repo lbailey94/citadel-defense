@@ -113,12 +113,14 @@ def audit_bend(bend_bin: Path | None, proof_dir: Path) -> dict:
     else:
         kernel["status"] = "FAIL"
     folds = {}
-    for name, filename, prefix, leaves in (
-        ("receipt_named_arithmetic_fold", "cpr_batch.bend", "BATCH_CPR_DAG_VERIFIED", 1 << 20),
-        ("swarm_named_arithmetic_fold", "citta_pac_swarm.bend", "SWARM_WARRANT_DIGEST", 1 << 22),
+    batch_cpr_rx = re.compile(r"^BATCH_CPR_DAG_VERIFIED=\d+$", re.MULTILINE)
+    swarm_warrant_rx = re.compile(r"^SWARM_WARRANT_DIGEST=\d+$", re.MULTILINE)
+    for name, filename, marker_rx, leaves in (
+        ("receipt_named_arithmetic_fold", "cpr_batch.bend", batch_cpr_rx, 1 << 20),
+        ("swarm_named_arithmetic_fold", "citta_pac_swarm.bend", swarm_warrant_rx, 1 << 22),
     ):
         result = command_result([str(bend_bin), str(proof_dir / filename)], cwd=proof_dir)
-        marker_found = re.search(rf"^{prefix}=\d+$", result["stdout"], re.MULTILINE) is not None
+        marker_found = marker_rx.search(result["stdout"]) is not None
         result.update({
             "status": "PASS" if result["returncode"] == 0 and marker_found else "FAIL",
             "leaf_count": leaves,
@@ -159,6 +161,19 @@ def verifier_observation(result: dict) -> tuple[str, tuple[str, ...]] | None:
         return None
 
 
+def _sorted_ext_files(root_dir: Path, suffix: str) -> list[Path]:
+    out: list[Path] = []
+    if not root_dir.is_dir():
+        return out
+    for dirpath, dirs, files in os.walk(root_dir):
+        dirs[:] = sorted(d for d in dirs if d not in {".git", "node_modules", "__pycache__"})
+        base = Path(dirpath)
+        for fn in files:
+            if fn.endswith(suffix):
+                out.append(base / fn)
+    return sorted(out)
+
+
 def audit_differential(cpr_dir: Path | None) -> dict:
     scope = (
         "Verdict and error-code agreement across all three same-project verifier "
@@ -190,7 +205,8 @@ def audit_differential(cpr_dir: Path | None) -> dict:
     cases = []
     vector_root = (cpr_dir / "vectors").resolve()
     for manifest in manifests:
-        entries = json.loads(manifest.read_text())["vectors"]
+        with manifest.open(encoding="utf-8") as mf:
+            entries = json.load(mf)["vectors"]
         for entry in entries:
             vector = (vector_root / entry["file"]).resolve()
             if not vector.is_relative_to(vector_root) or not vector.is_file():
@@ -243,7 +259,7 @@ def audit_differential(cpr_dir: Path | None) -> dict:
         "python_source_sha256": {str(path.relative_to(cpr_dir)): sha256_file(path)
                                  for path in sorted((cpr_dir / "continuity_receipt").glob("*.py"))},
         "javascript_module_sha256": {str(path.relative_to(cpr_dir)): sha256_file(path)
-                                     for path in sorted((cpr_dir / "js/dist").rglob("*.js"))},
+                                     for path in _sorted_ext_files(cpr_dir / "js/dist", ".js")},
         "compared_vectors": sum(record["comparable"] for record in records),
         "agreeing_vectors": sum(record["agreement"] for record in records),
         "engine_sha256": {"python": sha256_file(Path(sys.executable).resolve()),

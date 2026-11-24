@@ -99,7 +99,8 @@ class WorktreeMerkleChunker:
         for fpath in files_to_chunk:
             rel_name = str(fpath.relative_to(target_path)) if target_path.is_dir() else fpath.name
             try:
-                data = fpath.read_bytes()
+                with fpath.open("rb") as _fh:
+                    data = _fh.read()
             except Exception:
                 continue
 

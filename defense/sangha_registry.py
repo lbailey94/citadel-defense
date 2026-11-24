@@ -157,7 +157,8 @@ def _detect_project_room():
         cfg = p / ".sangha.json"
         if cfg.exists():
             try:
-                data = json.loads(cfg.read_text(encoding="utf-8"))
+                with cfg.open(encoding="utf-8") as _cf:
+                    data = json.load(_cf)
                 return data.get("project"), data.get("room"), data.get("title")
             except Exception:
                 pass

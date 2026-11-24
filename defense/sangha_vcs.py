@@ -70,7 +70,7 @@ def _find_repo_root(start_path: Path | None = None) -> tuple[Path | None, str]:
     try:
         res = subprocess.run(
             ["git", "-C", str(p), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         return Path(res.stdout.strip()).resolve(), "git"
     except Exception:
@@ -116,7 +116,7 @@ def issue_mandala_pass(scope: str, agent_id: str, ttl_s: int = 7200) -> dict | N
             "--allowed", scope,
             "--ttl", str(ttl_s)
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
         return json.loads(res.stdout.strip())
     except Exception:
         # Fallback to local signed envelope structure if wm CLI is busy
@@ -270,7 +270,7 @@ def cmd_status(args):
         try:
             res = subprocess.run(
                 ["git", "-C", str(repo_root), "status", "--porcelain"],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True, timeout=30
             )
             for line in res.stdout.splitlines():
                 if len(line) >= 4:
@@ -340,7 +340,8 @@ def cmd_diff(args):
     if scope and scope != ".":
         cmd.extend(["--", scope])
 
-    subprocess.run(cmd)
+    run_timeout = int(os.environ["SANGHA_VCS_CMD_TIMEOUT"]) if os.environ.get("SANGHA_VCS_CMD_TIMEOUT") else 30
+    subprocess.run(cmd, timeout=run_timeout)
     return 0
 
 
@@ -365,7 +366,7 @@ def cmd_commit(args):
     if repo_type == "git":
         res = subprocess.run(
             ["git", "-C", str(repo_root), "status", "--porcelain"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         out_of_bounds = []
         for line in res.stdout.splitlines():
@@ -402,12 +403,12 @@ def cmd_commit(args):
 
         # Stage in-scope changes
         stage_target = scope if scope != "." else "."
-        subprocess.run(["git", "-C", str(repo_root), "add", stage_target], check=True)
+        subprocess.run(["git", "-C", str(repo_root), "add", stage_target], check=True, timeout=30)
 
         # Compute diff before commit
         diff_res = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--staged"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         patch_text = diff_res.stdout
         patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
@@ -416,12 +417,12 @@ def cmd_commit(args):
         # Run commit
         commit_res = subprocess.run(
             ["git", "-C", str(repo_root), "commit", "-m", f"{message}\n\n[CPR-AER1] JTI: {jti}"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         # Get commit SHA
         sha_res = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         commit_sha = sha_res.stdout.strip()
     else:
@@ -521,7 +522,7 @@ def cmd_commit(args):
     # Optional auto-push
     if getattr(args, "auto_push", False) and repo_type == "git":
         print("Pushing directly to origin main...")
-        subprocess.run(["git", "-C", str(repo_root), "push", "origin", "main"], check=False)
+        subprocess.run(["git", "-C", str(repo_root), "push", "origin", "main"], check=False, timeout=120)
 
     print("\n" + "=" * 56)
     print("      Sangha VCS Commit & Provenance Receipt")
@@ -587,7 +588,7 @@ def cmd_audit(args):
 
     res = subprocess.run(
         ["git", "-C", str(repo_root), "log", f"-n{limit}", "--format=%H|%an|%ad|%s", "--date=iso-strict"],
-        capture_output=True, text=True, check=True
+        capture_output=True, text=True, check=True, timeout=30
     )
 
     commits = []
@@ -607,13 +608,14 @@ def cmd_audit(args):
 
         if has_receipt:
             try:
-                env = json.loads(receipt_file.read_text(encoding="utf-8"))
+                with receipt_file.open(encoding="utf-8") as rf:
+                    env = json.load(rf)
                 import continuity_receipt as cr
                 receipt_digest = cr.sha256_prefixed(cr.canonical_bytes(env))
                 # Check patch hash
                 diff_res = subprocess.run(
                     ["git", "-C", str(repo_root), "show", "--format=", c["sha"]],
-                    capture_output=True, text=True
+                    capture_output=True, text=True, timeout=30
                 )
                 actual_patch_hash = f"sha256:{hashlib.sha256(diff_res.stdout.encode('utf-8')).hexdigest()}"
                 expected_patch_hash = env.get("body", {}).get("response_hash")
@@ -678,7 +680,7 @@ def cmd_fork(args) -> int:
     try:
         head_sha = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         ).stdout.strip()
     except Exception as e:
         print(f"Error resolving HEAD: {e}", file=sys.stderr)
@@ -690,7 +692,8 @@ def cmd_fork(args) -> int:
         claims_dir = STATE_DIR / "claims"
         if claims_dir.exists():
             for cf in claims_dir.glob("*.json"):
-                cdoc = json.loads(cf.read_text(encoding="utf-8"))
+                with cf.open(encoding="utf-8") as cfh:
+                    cdoc = json.load(cfh)
                 if cdoc.get("scope") == scope and cdoc.get("status") == "active":
                     occupied_info = cdoc
                     break
@@ -701,7 +704,7 @@ def cmd_fork(args) -> int:
     try:
         subprocess.run(
             ["git", "-C", str(repo_root), "worktree", "add", "--detach", str(scratch_path), head_sha],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
     except subprocess.CalledProcessError as e:
         print(f"Error creating git worktree: {e.stderr}", file=sys.stderr)
@@ -844,7 +847,7 @@ def cmd_consolidate(args) -> int:
     try:
         diff_res = subprocess.run(
             ["git", "-C", str(scratch_path), "diff", base_commit],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         patch_text = diff_res.stdout
     except Exception as e:
@@ -855,16 +858,16 @@ def cmd_consolidate(args) -> int:
         try:
             head_scratch = subprocess.run(
                 ["git", "-C", str(scratch_path), "rev-parse", "HEAD"],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True, timeout=30
             ).stdout.strip()
             head_main = subprocess.run(
                 ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True, timeout=30
             ).stdout.strip()
             if head_scratch != head_main:
                 diff_res = subprocess.run(
                     ["git", "-C", str(scratch_path), "diff", head_main],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True, check=True, timeout=30
                 )
                 patch_text = diff_res.stdout
         except Exception:
@@ -873,7 +876,7 @@ def cmd_consolidate(args) -> int:
     if not patch_text.strip():
         print("Notice: No changes detected in shadow worktree to consolidate.")
         if not getattr(args, "no_cleanup", False):
-            subprocess.run(["git", "-C", str(repo_root), "worktree", "remove", "--force", str(scratch_path)], capture_output=True)
+            subprocess.run(["git", "-C", str(repo_root), "worktree", "remove", "--force", str(scratch_path)], capture_output=True, timeout=30)
             if selected_fork_id in forks_doc:
                 del forks_doc[selected_fork_id]
                 forks_file.write_text(json.dumps(forks_doc, indent=2), encoding="utf-8")
@@ -899,28 +902,28 @@ def cmd_consolidate(args) -> int:
     try:
         subprocess.run(
             ["git", "-C", str(repo_root), "apply", "--check"],
-            input=patch_text, text=True, check=True, capture_output=True
+            input=patch_text, text=True, check=True, capture_output=True, timeout=30
         )
         subprocess.run(
             ["git", "-C", str(repo_root), "apply"],
-            input=patch_text, text=True, check=True, capture_output=True
+            input=patch_text, text=True, check=True, capture_output=True, timeout=30
         )
     except subprocess.CalledProcessError as e:
         print(f"Error applying patch to trunk: {e.stderr}", file=sys.stderr)
         return 1
 
     for f in touched_files:
-        subprocess.run(["git", "-C", str(repo_root), "add", f], check=True)
+        subprocess.run(["git", "-C", str(repo_root), "add", f], check=True, timeout=30)
 
     msg = getattr(args, "message", None) or f"Consolidate {selected_fork_id}: {scope}"
     try:
         subprocess.run(
             ["git", "-C", str(repo_root), "commit", "-m", f"{msg}\n\n[CPR-AER1] Consolidate: {selected_fork_id}"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         )
         new_commit_sha = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=30
         ).stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Error committing consolidation to trunk: {e.stderr}", file=sys.stderr)
@@ -957,7 +960,7 @@ def cmd_consolidate(args) -> int:
         try:
             subprocess.run(
                 ["git", "-C", str(repo_root), "worktree", "remove", "--force", str(scratch_path)],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True, timeout=30
             )
             if selected_fork_id in forks_doc:
                 del forks_doc[selected_fork_id]
@@ -1022,7 +1025,8 @@ def cmd_sandbox(args) -> int:
     """Execute a command under hardware Landlock LSM confinement scoped to reservation."""
     if not sangha_kekkai or not sangha_kekkai.is_landlock_supported():
         print("Notice: Kernel Landlock LSM is not available on this host; running unconfined.", file=sys.stderr)
-        return subprocess.run(args.command).returncode
+        cmd_timeout = int(os.environ["SANGHA_VCS_CMD_TIMEOUT"]) if os.environ.get("SANGHA_VCS_CMD_TIMEOUT") else None
+        return subprocess.run(args.command, timeout=cmd_timeout).returncode
 
     repo_root, _ = _find_repo_root()
     active = get_active_pass()

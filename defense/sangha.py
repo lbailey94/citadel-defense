@@ -113,6 +113,72 @@ POST_TYPES = ("claim", "release", "flag", "handoff", "done", "question", "note",
 META_RE = re.compile(r"^>\s*(?P<body>Type\s*:.*?)\s*$", re.IGNORECASE)
 META_PART_RE = re.compile(r"^\s*(?P<key>Type|Scope|Expires|Released|Room|Federation)\s*:\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 
+POST_BY_RE = re.compile(r"^>\s*Posted by\s+(.+?)\s+on\s+(.+?)\s+at\s+(\S+)")
+TARGET_META_RE = re.compile(r"^>\s*Target:\s*(\S+)", re.IGNORECASE)
+BOARD_FILENAME_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-([0-9a-z]+)-")
+BOARD_FILENAME_FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-([0-9a-z]+)-([a-z0-9]+)-(.*)\.md$")
+EPOCH_DIR_RE = re.compile(r"^epoch-(\d+)$")
+SS_PROC_RE = re.compile(r'users:\(\("([^"]+)",pid=(\d+)')
+PS_LINE_RE = re.compile(r"\s*(\d+)\s+(\d+)\s+(.*)")
+STORE_FLAG_RE = re.compile(r"--store\s+(\S+)")
+DAG_ISSUE_REF_RE = re.compile(r"#(\d+)")
+
+_PRUNED_DIRS = frozenset({".git", "__pycache__", "target", "node_modules", ".venv"})
+_READ_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def _read_text_cached(path: Path) -> str:
+    """Read UTF-8 text cached by (path, mtime_ns, size)."""
+    p = Path(path)
+    st = p.stat()
+    key = (str(p), st.st_mtime_ns, st.st_size)
+    cached = _READ_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with p.open(encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    if len(_READ_CACHE) >= 2048:
+        _READ_CACHE.clear()
+    _READ_CACHE[key] = text
+    return text
+
+
+def _iter_files_pruned(
+    root: Path,
+    suffix: str = "",
+    glob_pattern: str = "",
+    skip_dirs: set[str] | None = None,
+):
+    """Yield files under root using pruned os.walk without descending into heavy dirs."""
+    import fnmatch
+    import os
+
+    skip_set: set[str] = set()
+    if skip_dirs:
+        for s in skip_dirs:
+            s_clean = s.rstrip("/")
+            skip_set.add(s_clean)
+            try:
+                skip_set.add(str(Path(s_clean).resolve()))
+            except OSError:
+                pass
+    root_str = str(root)
+    root_clean = root_str.rstrip("/")
+    if skip_set and any(root_clean == s or root_clean.startswith(s + os.sep) for s in skip_set):
+        return
+    for dirpath, dirnames, filenames in os.walk(root_str):
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in _PRUNED_DIRS and (not skip_set or os.path.join(dirpath, d) not in skip_set)
+        )
+        for fname in sorted(filenames):
+            if suffix and not fname.endswith(suffix):
+                continue
+            if glob_pattern and not fnmatch.fnmatch(fname, glob_pattern):
+                continue
+            yield Path(dirpath) / fname
+
 # Provenance at write time (2026-10-06, after agentbus SCHEMA.md): an agent
 # cannot reliably reconstruct later whether a statement was computed, fetched,
 # recalled or testimony, and a deferred check tends not to happen. The field is
@@ -163,7 +229,7 @@ def issue_mandala_pass(scope: str, agent_id: str, ttl_s: int = 7200) -> dict | N
             "--allowed", scope,
             "--ttl", str(ttl_s)
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
         pass_data = json.loads(res.stdout.strip())
         pass_file = PASSES_DIR / f"{scope_slug}.json"
         pass_file.write_text(json.dumps(pass_data, indent=2), encoding="utf-8")
@@ -416,7 +482,7 @@ def parse_post_header(path):
             "type": None, "scope": None, "expires": None, "released": None,
             "provenance": None, "room": None, "federation": None, "cpr": None}
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        text = _read_text_cached(Path(path))
     except OSError:
         return meta
     for line in text.splitlines()[:16]:
@@ -427,12 +493,12 @@ def parse_post_header(path):
             if meta["author"] or meta["target"]:
                 break  # end of header block
             continue
-        m_post = re.match(r"^>\s*Posted by\s+(.+?)\s+on\s+(.+?)\s+at\s+(\S+)", line)
+        m_post = POST_BY_RE.match(line)
         if m_post:
             meta["author"] = m_post.group(1).strip()
             meta["stamp"] = m_post.group(3).strip()
             continue
-        m_target = re.match(r"^>\s*Target:\s*(\S+)", line, re.IGNORECASE)
+        m_target = TARGET_META_RE.match(line)
         if m_target:
             meta["target"] = m_target.group(1).strip()
             continue
@@ -480,10 +546,10 @@ def _board_posts(include_archive=False):
     if include_archive:
         archive_dir = BOARD / "archive"
         if archive_dir.is_dir():
-            paths += list(archive_dir.rglob("*.md"))
+            paths += _iter_files_pruned(archive_dir, suffix=".md")
     out = []
     for p in sorted(paths):
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})-([0-9a-z]+)-", p.name)
+        m = BOARD_FILENAME_PREFIX_RE.match(p.name)
         seq = _seq_from_name(p.name)
         meta = parse_post_header(p)
         out.append({
@@ -635,12 +701,14 @@ def _ancestry_seat():
     pid = os.getpid()
     for _ in range(12):
         try:
-            comm = Path(f"/proc/{pid}/comm").read_text().strip().lower()
+            with open(f"/proc/{pid}/comm", encoding="utf-8") as fh:
+                comm = fh.read().strip().lower()
             if comm == "opencode":
                 return "opencode"
             if "antigravity" in comm or comm == "gemini":
                 return "antigravity"
-            stat = Path(f"/proc/{pid}/stat").read_text()
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+                stat = fh.read()
             pid = int(stat.split(") ", 1)[1].split()[1])
         except (OSError, ValueError, IndexError):
             return None
@@ -698,7 +766,7 @@ def get_next_seq():
             highest = max(highest, seq)
     archive_dir = BOARD / "archive"
     if archive_dir.is_dir():
-        for p in archive_dir.rglob("*.md"):
+        for p in _iter_files_pruned(archive_dir, suffix=".md"):
             seq = _seq_from_name(p.name)
             if seq is not None:
                 highest = max(highest, seq)
@@ -717,7 +785,7 @@ def _seq_in_use(seq, board=None):
             return True
     archive_dir = board / "archive"
     if archive_dir.is_dir():
-        for p in archive_dir.rglob("*.md"):
+        for p in _iter_files_pruned(archive_dir, suffix=".md"):
             if _seq_from_name(p.name) == seq:
                 return True
     return False
@@ -1007,7 +1075,9 @@ def cmd_inbox(args):
         stale_ids = {it.get("id") for it in items if not it.get("read") and _item_stale(it)}
         if stale_ids:
             lines = []
-            for line in inbox_file.read_text(encoding="utf-8").splitlines():
+            with inbox_file.open(encoding="utf-8") as _fh:
+                _inbox_lines = _fh.read().splitlines()
+            for line in _inbox_lines:
                 if line.strip():
                     try:
                         d = json.loads(line)
@@ -1071,7 +1141,9 @@ def cmd_ack(args):
 
     lines = []
     found = 0
-    for line in inbox_file.read_text(encoding="utf-8").splitlines():
+    with inbox_file.open(encoding="utf-8") as _fh:
+        _ack_lines = _fh.read().splitlines()
+    for line in _ack_lines:
         if line.strip():
             try:
                 d = json.loads(line)
@@ -1105,7 +1177,7 @@ def _seq_matches(seq_num):
             matches.append(p)
     archive_dir = BOARD / "archive"
     if archive_dir.is_dir():
-        for p in sorted(archive_dir.rglob("*.md")):
+        for p in sorted(_iter_files_pruned(archive_dir, suffix=".md")):
             if _seq_from_name(p.name) == seq_num:
                 matches.append(p)
     return matches
@@ -1121,7 +1193,7 @@ def cmd_read(args):
         if not candidates:
             archive_dir = BOARD / "archive"
             if archive_dir.is_dir():
-                candidates = list(archive_dir.rglob(f"*{query}*"))
+                candidates = list(_iter_files_pruned(archive_dir, glob_pattern=f"*{query}*"))
         matches = candidates[:1]
 
     if not matches:
@@ -1134,7 +1206,8 @@ def cmd_read(args):
         if i:
             print()
         print(f"=== {path.name} ===")
-        print(path.read_text(encoding="utf-8", errors="replace"))
+        with path.open(encoding="utf-8", errors="replace") as _fh:
+            print(_fh.read())
 
 def cmd_list(args):
     room_filter = (getattr(args, "room", None) or "").strip().lower()
@@ -1148,7 +1221,7 @@ def cmd_list(args):
             continue
         prov = meta.get("provenance")
         stamp = meta.get("stamp") or ""
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})-([0-9a-z]+)-([a-z0-9]+)-(.*)\.md$", p.name)
+        m = BOARD_FILENAME_FULL_RE.match(p.name)
         if m:
             seq = int(m.group(2)) if m.group(2).isdigit() else 0
             posts.append((stamp, m.group(1), seq, m.group(3), m.group(4), p.name, prov, meta))
@@ -1390,7 +1463,7 @@ def detect_epoch_info():
     if archive_dir.is_dir():
         for d in archive_dir.glob("epoch-*"):
             if d.is_dir():
-                m = re.match(r"^epoch-(\d+)$", d.name)
+                m = EPOCH_DIR_RE.match(d.name)
                 if m:
                     highest_epoch = max(highest_epoch, int(m.group(1)))
 
@@ -1769,7 +1842,7 @@ def similar_posts(text, limit=3, threshold=SIMILARITY_THRESHOLD, pool=120, exclu
     df = {}
     for p in posts:
         try:
-            body = p["path"].read_text(encoding="utf-8", errors="replace")
+            body = _read_text_cached(p["path"])
         except OSError:
             continue
         docs[p["file"]] = p
@@ -1828,7 +1901,7 @@ def cmd_search(args):
     for post in sorted(_board_posts(include_archive=True),
                        key=lambda p: (p["date"], p["seq"] or 0), reverse=True):
         try:
-            text = post["path"].read_text(encoding="utf-8", errors="replace")
+            text = _read_text_cached(post["path"])
         except OSError:
             continue
         if term not in text.lower():
@@ -2159,7 +2232,9 @@ def _inbox_items(agent):
     inbox_file = INBOX_DIR / f"{agent}.jsonl"
     items = []
     if inbox_file.exists():
-        for line in inbox_file.read_text(encoding="utf-8").splitlines():
+        with inbox_file.open(encoding="utf-8") as _fh:
+            _item_lines = _fh.read().splitlines()
+        for line in _item_lines:
             if line.strip():
                 try:
                     items.append(json.loads(line))
@@ -2309,10 +2384,8 @@ def cmd_sentinel(args):
             skip_dirs = {str(BOARD), str(SANGHA_DIR), str(Path.home() / "SharedWorkspace/board"),
                          str(Path.home() / "SharedWorkspace/.sangha")}
             recent = []
-            for f in path.rglob("*"):
-                if not f.is_file() or "/.git/" in str(f) or "/__pycache__/" in str(f):
-                    continue
-                if any(str(f).startswith(s + "/") for s in skip_dirs):
+            for f in _iter_files_pruned(path, skip_dirs=skip_dirs):
+                if not f.is_file():
                     continue
                 try:
                     if now - f.stat().st_mtime <= args.recent_hours * 3600:
@@ -2451,7 +2524,7 @@ def cmd_ports(args):
             if not (18700 <= port <= 18999):
                 continue
             proc = parts[-1] if "users:" in parts[-1] else ""
-            m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', proc)
+            m = SS_PROC_RE.search(proc)
             listeners.append({
                 "port": port,
                 "process": m.group(1) if m else "?",
@@ -2467,11 +2540,11 @@ def cmd_ports(args):
         for line in out.splitlines():
             if "wm serve" not in line and "wm-927" not in line:
                 continue
-            m = re.match(r"\s*(\d+)\s+(\d+)\s+(.*)", line)
+            m = PS_LINE_RE.match(line)
             if not m:
                 continue
             pid, etimes, cmd = int(m.group(1)), int(m.group(2)), m.group(3)
-            sm = re.search(r"--store\s+(\S+)", cmd)
+            sm = STORE_FLAG_RE.search(cmd)
             store = sm.group(1) if sm else "(no --store)"
             stores.setdefault(store, []).append({"pid": pid, "uptime_min": etimes // 60})
     except (OSError, subprocess.SubprocessError):
@@ -3048,7 +3121,7 @@ def cmd_canvas(args):
     for p in recent_posts:
         seq = p["seq"]
         title = p.get("title") or ""
-        refs = re.findall(r"#(\d+)", title)
+        refs = DAG_ISSUE_REF_RE.findall(title)
         for ref_s in refs:
             ref_seq = int(ref_s)
             if ref_seq != seq and ref_seq in post_node_map and seq in post_node_map:
@@ -3546,7 +3619,9 @@ def load_credit_ledger() -> list[dict]:
     if not CREDIT_LEDGER_FILE.exists():
         return []
     rows = []
-    for line in CREDIT_LEDGER_FILE.read_text(encoding="utf-8").splitlines():
+    with CREDIT_LEDGER_FILE.open(encoding="utf-8") as _fh:
+        _ledger_lines = _fh.read().splitlines()
+    for line in _ledger_lines:
         if line.strip():
             try:
                 rows.append(json.loads(line))
@@ -3643,7 +3718,8 @@ def cmd_credit(args):
 
         for rfile in sorted(RECEIPTS_DIR.glob("*.json")):
             try:
-                data = json.loads(rfile.read_text(encoding="utf-8"))
+                with rfile.open(encoding="utf-8") as _rf:
+                    data = json.load(_rf)
             except Exception:
                 continue
 

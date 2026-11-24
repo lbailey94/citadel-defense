@@ -147,20 +147,23 @@ class EvidenceTruthSmoke(unittest.TestCase):
         self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
         for max_age in (True, -1):
             _, pins = self._make_pinned_artifact()
-            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            with pins.open(encoding="utf-8") as fh:
+                manifest = json.load(fh)
             manifest["max_age_seconds"] = max_age
             pins.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
         for max_age in (True, -1):
             _, pins = self._make_pinned_artifact()
-            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            with pins.open(encoding="utf-8") as fh:
+                manifest = json.load(fh)
             manifest["artifacts"]["receipt"]["max_age_seconds"] = max_age
             pins.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
 
         for constant in ("NaN", "Infinity", "-Infinity"):
             _, pins = self._make_pinned_artifact()
-            raw = pins.read_text(encoding="utf-8").replace('"max_age_seconds": 3600', f'"max_age_seconds": {constant}')
+            with pins.open(encoding="utf-8") as fh:
+                raw = fh.read().replace('"max_age_seconds": 3600', f'"max_age_seconds": {constant}')
             pins.write_text(raw, encoding="utf-8")
             self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")
 
@@ -181,7 +184,8 @@ class EvidenceTruthSmoke(unittest.TestCase):
 
         for pin_count in (None, True, 2.0, -1):
             artifact, pins = self._make_pinned_artifact()
-            manifest = json.loads(pins.read_text(encoding="utf-8"))
+            with pins.open(encoding="utf-8") as fh:
+                manifest = json.load(fh)
             manifest["artifacts"]["receipt"]["counts"]["receipts.count"] = pin_count
             pins.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertNotEqual(validate_evidence_manifest(pins)["status"], "VERIFIED_INTEGRITY")

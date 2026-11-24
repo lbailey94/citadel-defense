@@ -122,14 +122,6 @@ def test_cognitive_tarpit():
     log_test("Average Serving Latency", avg_latency < 0.100, f"{avg_latency*1000:.2f}ms per response")
     log_test("Adversarial Steering Injected", directive_count > 0, f"{directive_count} responses contained agent backoff headers")
 
-    return {
-        "suite": "cognitive_tarpit",
-        "requests": len(results),
-        "total_bytes": total_bytes,
-        "avg_latency_ms": round(avg_latency * 1000, 2),
-        "total_time_ms": round(total_time * 1000, 2)
-    }
-
 
 # ── Suite 2: Canary Honeytoken Multi-Vector Ingestion ─────────────────────
 def test_canary_vectors():
@@ -159,7 +151,6 @@ def test_canary_vectors():
         log_test(f"Canary Vector: {name}", is_hit, f"Type: {ttype}")
 
     log_test("100% Canary Ingestion Integrity", tripped == len(vectors), f"{tripped}/{len(vectors)} vectors tripped")
-    return {"suite": "canary_vectors", "tested": len(vectors), "tripped": tripped}
 
 
 # ── Suite 3: Immunizer Invariant Boundary (No Overblocking) ───────────────
@@ -210,7 +201,6 @@ def test_immunizer_invariants():
             sig_verified = False
 
     log_test("Ed25519 Rule Signature Attestation", sig_verified, "Signature verified against VIOLET public key")
-    return {"suite": "immunizer_invariants", "true_positive_promoted": safe_a, "false_positive_rejected": correctly_rejected, "signature_verified": sig_verified}
 
 
 # ── Suite 4: Single-Packet Authorization Adversarial Battery ──────────────
@@ -271,8 +261,6 @@ def test_spa_adversarial_battery():
     res_rogue = spa.verify_knock_packet(pkt_rogue, "10.0.0.1")
     log_test("Untrusted Key Invariant", res_rogue.get("valid") is False and res_rogue.get("reason") == "unauthorized_key", "Rogue public key dropped")
 
-    return {"suite": "spa_adversarial", "all_invariants_held": True}
-
 
 # ── Suite 5: Federated Mesh Delta Poisoning Defense ───────────────────────
 def test_mesh_delta_poisoning():
@@ -289,8 +277,6 @@ def test_mesh_delta_poisoning():
     poisoned_delta["new_attackers"] = ["127.0.0.1"]  # Try to trick fleet into blackholing localhost
     is_poisoned_valid = m.verify_delta(poisoned_delta)
     log_test("Poisoned Delta Tamper Rejection", is_poisoned_valid is False, "Signature mismatch detected; payload discarded")
-
-    return {"suite": "mesh_delta_poisoning", "tampering_rejected": is_poisoned_valid is False}
 
 
 # ── Suite 6: Mandala Kekkai (Gate 13) Landlock LSM Confinement ───────────
@@ -335,8 +321,6 @@ def test_mandala_kekkai():
     res_net = kekkai.run_confined(net_escape_task, task_name="stress_net_escape")
     is_metsu_net = res_net.get("phase") == "Metsu" and ("Permission" in str(res_net.get("error")) or "denied" in str(res_net.get("error")).lower())
     log_test("Kekkai Zero-Port TCP Network Jail", is_metsu_net, f"Denied egress socket creation")
-
-    return {"suite": "mandala_kekkai", "kai": is_kai, "metsu_fs": is_metsu_fs, "metsu_net": is_metsu_net}
 
 
 # ── Suite 7: OpenCode-Class Credential Airlock & Zero-Refusal Triage ──────
@@ -442,14 +426,6 @@ def test_opencode_credential_airlock():
         f"{triaged}/{len(hostile_payloads)} hostile vectors immunized in {triage_ms:.2f}ms (0% refusal, 0% FP)",
     )
 
-    return {
-        "suite": "opencode_credential_airlock",
-        "real_scrubbed": real_scrubbed,
-        "canary_caught": canary_caught,
-        "auth_blocked": auth_blocked,
-        "zero_refusal_triaged": triaged == len(hostile_payloads),
-    }
-
 
 # ── Main Runner ───────────────────────────────────────────────────────────
 def main():
@@ -459,13 +435,13 @@ def main():
     print(f"{BOLD}======================================================={RESET}")
     start_all = time.time()
 
-    r1 = test_cognitive_tarpit()
-    r2 = test_canary_vectors()
-    r3 = test_immunizer_invariants()
-    r4 = test_spa_adversarial_battery()
-    r5 = test_mesh_delta_poisoning()
-    r6 = test_mandala_kekkai()
-    r7 = test_opencode_credential_airlock()
+    test_cognitive_tarpit()
+    test_canary_vectors()
+    test_immunizer_invariants()
+    test_spa_adversarial_battery()
+    test_mesh_delta_poisoning()
+    test_mandala_kekkai()
+    test_opencode_credential_airlock()
 
     total_elapsed = time.time() - start_all
     print(f"\n{BOLD}{GREEN}ALL 7 SUITES COMPLETED IN {total_elapsed*1000:.1f}ms{RESET}")

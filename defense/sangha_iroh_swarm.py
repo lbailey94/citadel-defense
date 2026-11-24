@@ -160,16 +160,28 @@ class IrohSwarmNode:
         """Slice target path into 64KB Merkle chunks, store them locally, and broadcast manifest."""
         manifest = self.chunker.chunk_directory_or_diff(target_path, author=author, rel_scope=scope)
 
-        # Ingest all chunks into content-addressed chunk store
+        # Ingest all chunks into content-addressed chunk store using bounded seeks
         target_path = Path(target_path).resolve()
-        for c in manifest["chunks"]:
-            rel_file = c["file"]
-            offset = c["offset"]
-            size = c["size"]
-            fpath = target_path / rel_file if target_path.is_dir() else target_path
+        open_fpath: Path | None = None
+        open_fh = None
+        try:
+            for c in manifest["chunks"]:
+                rel_file = c["file"]
+                offset = c["offset"]
+                size = c["size"]
+                fpath = target_path / rel_file if target_path.is_dir() else target_path
 
-            data = fpath.read_bytes()[offset : offset + size]
-            self.store.put(data, expected_hash=c["hash"])
+                if open_fpath != fpath:
+                    if open_fh is not None:
+                        open_fh.close()
+                    open_fh = fpath.open("rb")
+                    open_fpath = fpath
+                open_fh.seek(offset)
+                data = open_fh.read(size)
+                self.store.put(data, expected_hash=c["hash"])
+        finally:
+            if open_fh is not None:
+                open_fh.close()
 
         # Broadcast Merkle manifest root to swarm mesh
         try:

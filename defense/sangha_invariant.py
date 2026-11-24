@@ -56,6 +56,36 @@ class InvariantVerifier:
             }
             INVARIANTS_STORE.write_text(json.dumps(default_invariants, indent=2), encoding="utf-8")
 
+    _PATTERN_CACHE: dict[str, re.Pattern[str]] = {}
+    _RULES_FILE_CACHE: dict[tuple[str, int, int], list[tuple[str, re.Pattern[str] | None]]] = {}
+
+    @classmethod
+    def _compile_rule_pattern(cls, pattern: str) -> re.Pattern[str]:
+        cached = cls._PATTERN_CACHE.get(pattern)
+        if cached is None:
+            cached = re.compile(pattern)
+            cls._PATTERN_CACHE[pattern] = cached
+        return cached
+
+    @classmethod
+    def _load_compiled_rules(cls) -> list[tuple[str, re.Pattern[str] | None]]:
+        try:
+            st = INVARIANTS_STORE.stat()
+            cache_key = (str(INVARIANTS_STORE), st.st_mtime_ns, st.st_size)
+            cached = cls._RULES_FILE_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            with INVARIANTS_STORE.open(encoding="utf-8") as inf:
+                invariants_doc = json.load(inf)
+            compiled: list[tuple[str, re.Pattern[str] | None]] = []
+            for rule in invariants_doc.get("rules", []):
+                pat = rule.get("pattern")
+                compiled.append((str(rule["id"]), cls._compile_rule_pattern(pat) if pat else None))
+            cls._RULES_FILE_CACHE[cache_key] = compiled
+            return compiled
+        except Exception:
+            return []
+
     def verify_working_tree(
         self,
         repo_root: Path,
@@ -72,7 +102,7 @@ class InvariantVerifier:
             try:
                 res = subprocess.run(
                     ["git", "-C", str(repo_root), "status", "--porcelain"],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True, check=True, timeout=30,
                 )
                 files_to_check = [line[3:].strip() for line in res.stdout.splitlines() if len(line) >= 4]
             except Exception:
@@ -87,6 +117,9 @@ class InvariantVerifier:
                     invariants_passed += 1
         else:
             invariants_passed += 1
+
+        # Preload and compile invariant rules once per invariants.json version (stat-cached).
+        compiled_rules = self._load_compiled_rules()
 
         # 2. Syntax & content invariant checks
         for fname in files_to_check:
@@ -113,12 +146,11 @@ class InvariantVerifier:
 
             # General regex invariant checks
             try:
-                content = fpath.read_text(encoding="utf-8", errors="ignore")
-                invariants_doc = json.loads(INVARIANTS_STORE.read_text(encoding="utf-8"))
-                for rule in invariants_doc.get("rules", []):
-                    pat = rule.get("pattern")
-                    if pat and re.search(pat, content):
-                        violations.append(f"Invariant breach [{rule['id']}] triggered in {fname}")
+                with fpath.open(encoding="utf-8", errors="ignore") as cf:
+                    content = cf.read()
+                for rule_id, compiled_pat in compiled_rules:
+                    if compiled_pat is not None and compiled_pat.search(content):
+                        violations.append(f"Invariant breach [{rule_id}] triggered in {fname}")
                     else:
                         invariants_passed += 1
             except Exception:
